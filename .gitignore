@@ -1,0 +1,11 @@
+profile.yaml
+data/
+.env
+*.db
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+client_secret*.json
+.superpowers/
