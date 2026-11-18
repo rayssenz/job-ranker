@@ -3,21 +3,14 @@
 Status: {proposed | accepted | replaced by NNNN}
 Date: {YYYY-MM-DD}
 
-## Context and Problem Statement
+## Context
 
-{The situation and the problem, in two or three sentences. End with the question to be decided.}
+{The situation and the problem, in two or three sentences.}
 
-## Considered Options
+## Decision
 
-* {option 1}
-* {option 2}
-* {option 3}
+{What was decided.}
 
-## Decision Outcome
+## Consequences
 
-Chosen option: "{option 1}", because {reason}.
-
-### Consequences
-
-* Good, because {positive consequence}
-* Bad, because {negative consequence}
+* {what follows from the decision}

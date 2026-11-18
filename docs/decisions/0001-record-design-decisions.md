@@ -3,27 +3,17 @@
 Status: accepted
 Date: 2026-11-18
 
-## Context and Problem Statement
+## Context
 
-I work on this project alone, in milestones, with AI assistance. I make a choice once, such as which job feeds to read or how the model gets called, and a few weeks later I no longer remember why. The code shows what I built. It doesn't show what I turned down. My commit messages are one line each, so the reasons don't fit there.
+Design choices in this project are made once and are not visible in the code. Commit messages are one line, so they do not hold the reasoning either.
 
-How should the project keep track of its design decisions?
+## Decision
 
-## Considered Options
+Each decision that shapes the project is recorded as an ADR (architecture decision record): a short numbered file in `docs/decisions/` with the context and the decision.
 
-* One ADR file per decision in `docs/decisions/`
-* A single `DECISIONS.md` that lists every decision
-* No records, with the reasoning left to commit messages and memory
+When a decision changes, a new record replaces the old one. Existing records are not edited.
 
-## Decision Outcome
+## Consequences
 
-Chosen option: "One ADR file per decision", because each decision gets its own file and its own history. If I change my mind later, I write a new record that replaces the old one and leave the others alone. The template also makes me list the options I rejected, and those are what I forget first.
-
-I only write a record when there was a real alternative. A choice with one sensible answer doesn't need one.
-
-### Consequences
-
-* Good, because a reader can see why something was built this way without asking me.
-* Good, because I write most of the code with AI assistance. The decisions are mine, and this is where they are written down.
-* Bad, because every decision costs a few minutes of writing.
-* Bad, because a record goes stale if the code changes and I don't update it.
+* Each decision has its own file and its own history.
+* A record has to be updated or replaced when the code changes, or it goes stale.
