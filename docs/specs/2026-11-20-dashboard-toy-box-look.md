@@ -1,6 +1,6 @@
 # Dashboard: the toy box look
 
-Status: proposed on 2026-11-20
+Status: approved on 2026-11-20
 
 ## Problem
 
