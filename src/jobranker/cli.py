@@ -1,15 +1,18 @@
 """Command-line entry point. Later milestones attach subcommands to `app`."""
 
 import os
+import time
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
 
 import httpx
 import typer
+from rich.console import Console
 
 from jobranker.collect import DEFAULT_MAX_RESULTS, collect
 from jobranker.config import ConfigError, load_companies, load_searches, read_token
+from jobranker.display import RunDisplay, summary
 from jobranker.sources import linkedin
 from jobranker.store import Store, StoreError
 
@@ -55,6 +58,11 @@ def make_client() -> httpx.Client:
     )
 
 
+def make_console() -> Console:
+    """The console for the progress display. Tests replace this function."""
+    return Console()
+
+
 @app.command("collect")
 def collect_command(
     companies: Annotated[Path, typer.Option(help="Company list. Not committed.")] = Path(
@@ -75,6 +83,9 @@ def collect_command(
     actor: Annotated[
         str, typer.Option(help="Apify actor that runs the LinkedIn search.")
     ] = linkedin.DEFAULT_ACTOR,
+    quiet: Annotated[
+        bool, typer.Option("--quiet", help="Plain lines only, without the bar and the spinner.")
+    ] = False,
 ) -> None:
     """Fetch postings from the company feeds and the searches and store them."""
     try:
@@ -93,7 +104,12 @@ def collect_command(
     except StoreError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    with make_client() as client, store:
+    console = make_console()
+    # The bar is only drawn on a real terminal, never into a file, a pipe or a scheduled job.
+    live = console.is_terminal and not quiet
+    started = time.monotonic()
+    display = RunDisplay(console, len(company_list) + len(search_list), live=live)
+    with make_client() as client, store, display:
         reports = collect(
             company_list,
             search_list,
@@ -102,8 +118,9 @@ def collect_command(
             token=token,
             max_results=max_results,
             actor=actor,
+            on_start=display.start,
+            on_finish=display.finish,
         )
-    for report in reports:
-        typer.echo(report.line())
+    display.line(summary(reports, time.monotonic() - started))
     if all(report.error is not None for report in reports):
         raise typer.Exit(1)

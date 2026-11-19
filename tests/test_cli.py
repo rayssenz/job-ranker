@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import sqlite3
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from rich.console import Console
 from support import TOKEN, Recorder, routes
 from typer.testing import CliRunner
 
@@ -76,6 +78,7 @@ def test_collect_prints_one_line_per_source_and_exits_zero(
         "greenhouse Northwind Robotics: fetched 3, new 3, changed 0, duplicate 0",
         "lever      Bluefjord Labs: fetched 3, new 3, changed 0, duplicate 0",
         "ashby      Tessellate Systems: fetched 3, new 3, changed 0, duplicate 0",
+        "Done in 0:00: 3 sources, 0 not collected, 9 new postings.",
     ]
     assert (tmp_path / "data" / "ranker.db").exists()
 
@@ -92,7 +95,7 @@ def test_collect_reads_searches_and_token_from_env_file(
     args[args.index("--env-file") + 1] = str(env_file)
     result = runner.invoke(app, args)
     assert result.exit_code == 0
-    assert len(result.output.splitlines()) == 5
+    assert len(result.output.splitlines()) == 6
     assert "duplicate 1" in result.output
     assert TOKEN not in result.output
     apify = [r for r in recorder.requests if r.url.host == "api.apify.com"]
@@ -223,3 +226,82 @@ def test_unreadable_env_file_gives_a_short_message(
     assert "bad.env" in result.output
     assert "Traceback" not in result.output
     assert recorder.requests == []
+
+
+CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def searches_args(tmp_path: Path, *extra: str) -> list[str]:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"APIFY_TOKEN={TOKEN}\n")
+    args = collect_args(tmp_path, *extra)
+    args[args.index("--searches") + 1] = str(CONFIG / "searches.example.yaml")
+    args[args.index("--env-file") + 1] = str(env_file)
+    return args
+
+
+def use_terminal(monkeypatch: pytest.MonkeyPatch) -> io.StringIO:
+    screen = io.StringIO()
+    console = Console(file=screen, force_terminal=True, width=100, color_system=None)
+    monkeypatch.setattr(cli, "make_console", lambda: console)
+    return screen
+
+
+def test_plain_output_has_no_animation_and_ends_with_the_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_routes(monkeypatch, routes(lever=lambda r: httpx.Response(404)))
+    result = runner.invoke(app, searches_args(tmp_path))
+    assert result.exit_code == 0
+    assert not CONTROL_CHARACTER.search(result.output)
+    assert "Collecting" not in result.output
+    lines = result.output.splitlines()
+    assert lines[1] == "lever      Bluefjord Labs: HTTP 404"
+    assert re.fullmatch(
+        r"Done in \d+:\d\d: 5 sources, 1 not collected, \d+ new postings\.", lines[-1]
+    )
+    assert TOKEN not in result.output
+
+
+def test_terminal_output_shows_the_bar_and_the_running_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_routes(monkeypatch, routes())
+    screen = use_terminal(monkeypatch)
+    result = runner.invoke(app, searches_args(tmp_path))
+    assert result.exit_code == 0
+    shown = screen.getvalue()
+    assert "Collecting" in shown
+    assert "0/5" in shown and "5/5" in shown
+    assert "machine learning engineer / Lisbon" in shown
+    assert "greenhouse Northwind Robotics: fetched 3, new 3, changed 0, duplicate 0" in shown
+    assert re.search(r"Done in \d+:\d\d: 5 sources, 0 not collected, \d+ new postings\.", shown)
+    assert TOKEN not in shown + result.output
+
+
+def test_quiet_gives_plain_output_in_a_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_routes(monkeypatch, routes())
+    screen = use_terminal(monkeypatch)
+    result = runner.invoke(app, searches_args(tmp_path, "--quiet"))
+    assert result.exit_code == 0
+    shown = screen.getvalue() + result.output
+    assert "Collecting" not in shown
+    assert not CONTROL_CHARACTER.search(shown)
+    assert len(shown.splitlines()) == 6
+
+
+def test_each_line_is_written_before_the_next_source_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen_at_request: list[int] = []
+
+    def counting(request: httpx.Request) -> httpx.Response:
+        seen_at_request.append(len(capsys.readouterr().out.splitlines()))
+        return httpx.Response(404)
+
+    use_routes(monkeypatch, routes(greenhouse=counting, lever=counting, ashby=counting))
+    with pytest.raises(SystemExit):
+        app(collect_args(tmp_path))
+    assert seen_at_request == [0, 1, 1]
