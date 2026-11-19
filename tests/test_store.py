@@ -723,3 +723,17 @@ def test_review_list_stays_fast_with_many_postings(store: Store) -> None:
     assert len(store.review_groups("profile-a", 1)) == 1499
     # Looking up the decided groups once takes a few milliseconds. Once per posting takes seconds.
     assert time.perf_counter() - started < 0.3
+
+
+def test_version_mark_moves_with_new_and_changed_postings_only(store: Store) -> None:
+    empty = store.version_mark()
+    store.save(make_posting(), T1)
+    first = store.version_mark()
+    assert first != empty
+    store.save(make_posting(), T2)
+    assert store.version_mark() == first
+    store.save(make_posting(description="Build better models."), T2)
+    changed = store.version_mark()
+    assert changed != first
+    store.save(make_posting(posting_id="1002", title="Data Engineer"), T2)
+    assert store.version_mark() != changed

@@ -19,7 +19,7 @@ SAFETY_HEADERS = {
         "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     ),
     "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
+    "referrer-policy": "same-origin",
     "x-frame-options": "DENY",
     "cache-control": "no-store",
 }
@@ -97,7 +97,7 @@ def test_applied_moves_a_group_to_its_tab(db: Path) -> None:
     assert decisions(db) == [("Old Role", Decision.APPLIED)]
     html = client.get("/").text
     assert titles(html) == ["New Role"]
-    assert counts(html) == {"/": 1, "/applied": 1, "/dismissed": 0, "/runs": 0}
+    assert counts(html) == {"/": 1, "/applied": 1, "/dismissed": 0}
     assert titles(client.get("/applied").text) == ["Old Role"]
 
 
@@ -108,7 +108,7 @@ def test_not_for_me_moves_a_group_to_its_tab(db: Path) -> None:
     )
     assert response.status_code == 303
     assert decisions(db) == [("New Role", Decision.DISMISSED)]
-    assert counts(client.get("/").text) == {"/": 1, "/applied": 0, "/dismissed": 1, "/runs": 0}
+    assert counts(client.get("/").text) == {"/": 1, "/applied": 0, "/dismissed": 1}
     assert titles(client.get("/dismissed").text) == ["New Role"]
 
 
@@ -512,3 +512,11 @@ def test_application_has_no_cross_origin_sharing(db: Path) -> None:
     response = site(db).options("/decide", headers={"Origin": "http://evil.test"})
     assert "access-control-allow-origin" not in response.headers
     assert "access-control-allow-origin" not in site(db).get("/", headers={"Origin": OWN}).headers
+
+
+def test_plain_form_send_names_its_own_page(db: Path) -> None:
+    # With a policy of no referrer at all, a browser sends a plain form with `Origin: null`,
+    # which is refused. This policy keeps the referrer inside the application only.
+    html = site(db).get("/").text
+    assert '<meta name="referrer" content="same-origin">' in html
+    assert "no-referrer" not in html

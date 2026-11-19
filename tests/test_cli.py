@@ -630,7 +630,7 @@ def test_dashboard_stops_when_the_port_is_taken(
     assert served.apps == [] and served.opened == []
 
 
-@pytest.mark.parametrize("port", ["0", "-1", "65536", "abc"])
+@pytest.mark.parametrize("port", ["0", "-1", "80", "1023", "65536", "abc"])
 def test_dashboard_refuses_a_port_that_is_no_port(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: str
 ) -> None:
@@ -673,3 +673,18 @@ def test_real_server_answers_on_the_given_socket_and_names_no_server_software(
         thread.join(timeout=10)
         listener.close()
     assert not thread.is_alive()
+
+
+def test_dashboard_stopped_with_ctrl_c_ends_without_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    Served(monkeypatch)
+
+    def interrupted(application: FastAPI, listener: socket.socket) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "serve", interrupted)
+    lines = dashboard(database, profile, free_port(), "--no-open")
+    assert lines[-1] == "Dashboard stopped."
+    assert not any("Aborted" in line for line in lines)

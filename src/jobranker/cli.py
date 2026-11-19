@@ -1,5 +1,6 @@
 """Command-line entry point. Later milestones attach subcommands to `app`."""
 
+import contextlib
 import os
 import socket
 import time
@@ -236,7 +237,7 @@ def dashboard_command(
     profile: ProfileOption = Path("profile.yaml"),
     db: DatabaseOption = Path("data/ranker.db"),
     port: Annotated[
-        int, typer.Option(min=1, max=65535, help="Local port the dashboard answers on.")
+        int, typer.Option(min=1024, max=65535, help="Local port the dashboard answers on.")
     ] = DEFAULT_PORT,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open the browser.")] = False,
 ) -> None:
@@ -260,4 +261,7 @@ def dashboard_command(
     with listener:
         if not no_open:
             open_browser(address)
-        serve(create_app(db, loaded, port=port), listener)
+        # Ctrl+C is the way to stop the dashboard, so it is not reported as a failure.
+        with contextlib.suppress(KeyboardInterrupt):
+            serve(create_app(db, loaded, port=port), listener)
+    typer.echo("Dashboard stopped.")

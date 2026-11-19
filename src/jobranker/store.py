@@ -529,6 +529,16 @@ class Store:
         ).fetchall()
         return [(row["source"], row["target"], row["error"]) for row in rows]
 
+    def version_mark(self) -> int:
+        """A number that changes when a posting is stored for the first time or with new text.
+
+        Cheap to read, so a caller can tell whether anything was collected since it last looked.
+        """
+        mark: int = self._db.execute(
+            "SELECT COALESCE(MAX(rowid), 0) FROM posting_versions"
+        ).fetchone()[0]
+        return mark
+
     def count(self) -> int:
         result: int = self._db.execute("SELECT COUNT(*) FROM postings").fetchone()[0]
         return result

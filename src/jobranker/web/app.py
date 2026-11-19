@@ -6,7 +6,8 @@ names this machine, and changes data only with the token of this start.
 """
 
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from jobranker.collect import utc_now
 from jobranker.profile import Profile
 from jobranker.rules import RULES_VERSION
+from jobranker.screening import apply_rules
 from jobranker.store import Decision, RunSummary, Store, StoredPosting
 from jobranker.web import view
 
@@ -43,7 +45,9 @@ SAFETY_HEADERS = {
         "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     ),
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
+    # The referrer stays inside the application. With no referrer at all, a browser sends
+    # a plain form with `Origin: null`, and the guard would refuse the dashboard's own forms.
+    "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
     "Cache-Control": "no-store",
 }
@@ -75,7 +79,8 @@ class Card:
 class Tab:
     path: str
     label: str
-    count: int
+    # None for a tab that shows only its latest rows, where a number would look like a total.
+    count: int | None
 
 
 @dataclass(frozen=True)
@@ -212,9 +217,8 @@ def create_app(
             REVIEW: len(store.review_groups(profile.digest, RULES_VERSION)),
             APPLIED: len(store.decided_groups(Decision.APPLIED)),
             DISMISSED: len(store.decided_groups(Decision.DISMISSED)),
-            RUNS: len(store.run_summaries(RUNS_SHOWN)),
         }
-        tabs = [Tab(path, label, counts[path]) for path, label in _TAB_LABELS.items()]
+        tabs = [Tab(path, label, counts.get(path)) for path, label in _TAB_LABELS.items()]
         page = templates.get_template(name).render(tabs=tabs, active=active, token=token, **context)
         return HTMLResponse(page)
 
@@ -227,13 +231,31 @@ def create_app(
             headers=SAFETY_HEADERS,
         )
 
-    # A SQLite connection belongs to one thread, so each request opens its own store.
+    # The version mark of the store at the last rule run. Empty before the first request.
+    checked: list[int] = []
+
+    @contextmanager
+    def opened() -> Iterator[Store]:
+        """The store for one page request, with the rules applied to what is new.
+
+        A SQLite connection belongs to one thread, so each request opens its own store.
+        A collection run can store postings while the dashboard is open. They get their
+        rule results here, so a reload shows them. Looking for postings without a result
+        reads every posting, so it is done only when something was stored since the last time.
+        """
+        with Store(db) as store:
+            mark = store.version_mark()
+            if checked != [mark]:
+                apply_rules(store, profile, now())
+                checked[:] = [mark]
+            yield store
+
     @app.get(REVIEW, response_class=HTMLResponse)
     def review(entry: str = "", q: str = "", page: str = "1") -> HTMLResponse:
         only_entry = entry == "1"
         query = _query(q)
         moment = now()
-        with Store(db) as store:
+        with opened() as store:
             groups = store.review_groups(profile.digest, RULES_VERSION)
             kept = [
                 stored
@@ -248,13 +270,19 @@ def create_app(
                 empty = ""
             elif groups:
                 empty = "No job matches. Clear the search or turn the switch off."
-            elif store.count():
+            elif not store.count():
+                empty = "No jobs yet. Run `jobrank collect` in the terminal, then reload this page."
+            elif not store.rule_counts(profile.digest, RULES_VERSION)["groups"]:
+                empty = (
+                    "No job passed the rules. Run `jobrank collect` in the terminal to look"
+                    " for new jobs, or widen the rules in profile.yaml and start the"
+                    " dashboard again."
+                )
+            else:
                 empty = (
                     "Everything is reviewed. Run `jobrank collect` in the terminal"
                     " to look for new jobs, then reload this page."
                 )
-            else:
-                empty = "No jobs yet. Run `jobrank collect` in the terminal, then reload this page."
             latest = store.run_summaries(1)
             return render(
                 "cards.html",
@@ -280,7 +308,7 @@ def create_app(
     def decided(path: str, one: str, many: str) -> HTMLResponse:
         moment = now()
         stamped = path == APPLIED
-        with Store(db) as store:
+        with opened() as store:
             groups = store.decided_groups(_DECISION_OF[path])
             cards = [_card(stored, moment, at if stamped else None) for stored, at in groups]
             return render(
@@ -304,7 +332,7 @@ def create_app(
 
     @app.get(RUNS, response_class=HTMLResponse)
     def runs() -> HTMLResponse:
-        with Store(db) as store:
+        with opened() as store:
             summaries = store.run_summaries(RUNS_SHOWN)
             failures = store.run_failures(summaries[0].run_id) if summaries else []
             return render(

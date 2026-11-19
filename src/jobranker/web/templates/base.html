@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>{{ heading }} | Job Ranker</title>
 <link rel="icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/dashboard.css">
@@ -17,7 +17,7 @@
   </div>
   <nav class="tabs" aria-label="Lists">
     {% for tab in tabs -%}
-    <a class="tab" href="{{ tab.path }}"{% if tab.path == active %} aria-current="page"{% endif %}>{{ tab.label }} <span class="count">{{ tab.count }}</span></a>
+    <a class="tab" href="{{ tab.path }}"{% if tab.path == active %} aria-current="page"{% endif %}>{{ tab.label }}{% if tab.count is not none %} <span class="count">{{ tab.count }}</span>{% endif %}</a>
     {% endfor %}
   </nav>
 </header>

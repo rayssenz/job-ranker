@@ -100,7 +100,7 @@ def test_each_tab_has_its_count_and_its_groups(db: Path) -> None:
     decide(db, second, Decision.APPLIED)
     decide(db, third, Decision.DISMISSED)
     for path in PAGES:
-        assert counts(page(db, path)) == {"/": 1, "/applied": 1, "/dismissed": 1, "/runs": 0}
+        assert counts(page(db, path)) == {"/": 1, "/applied": 1, "/dismissed": 1}
     assert titles(page(db)) == ["Open Role"]
     assert titles(page(db, "/applied")) == ["Sent Role"]
     assert titles(page(db, "/dismissed")) == ["Dull Role"]
@@ -308,7 +308,7 @@ def test_decided_group_stays_in_its_tab_after_a_profile_change(db: Path) -> None
         apply_rules(store, other, NOW)
         assert store.review_groups(other.digest, RULES_VERSION) == []
     assert titles(page(db, "/applied", profile=other)) == ["Sent Role"]
-    assert counts(page(db, profile=other)) == {"/": 0, "/applied": 1, "/dismissed": 0, "/runs": 0}
+    assert counts(page(db, profile=other)) == {"/": 0, "/applied": 1, "/dismissed": 0}
 
 
 def test_empty_database_says_to_collect(db: Path) -> None:
@@ -439,7 +439,9 @@ def test_runs_tab_shows_the_last_ten_runs_newest_first(db: Path) -> None:
         (3, 1, 4),
     ]
     assert rows[0][0].startswith("12 Nov 2026")
-    assert counts(html)["/runs"] == 10
+    # Only ten runs are shown, so a count on this tab would look like a total.
+    assert "/runs" not in counts(html)
+    assert "Last 10 runs" in html
 
 
 def test_runs_tab_names_the_sources_the_latest_run_did_not_collect(db: Path) -> None:
@@ -532,3 +534,49 @@ def test_a_page_request_stores_nothing(db: Path) -> None:
         page(db, path)
     with Store(db) as store:
         assert store.dump() == before
+
+
+def test_postings_collected_while_the_dashboard_runs_appear_after_a_reload(db: Path) -> None:
+    add(db, posting(1, title="Old Role"))
+    client = site(db)
+    assert titles(client.get("/").text) == ["Old Role"]
+    # A collection run stores postings and applies no rules.
+    with Store(db) as store:
+        store.save(posting(2, title="New Role"), NOW)
+        store.save(posting(3, title="Elsewhere Role", location="Madrid"), NOW)
+        store.save(posting(1, title="Old Role", description="Build better models."), NOW)
+    html = client.get("/").text
+    assert titles(html) == ["New Role", "Old Role"]
+    assert counts(html)["/"] == 2
+    assert counts(client.get("/applied").text)["/"] == 2
+
+
+def test_review_tab_says_when_no_job_passed_the_rules(db: Path) -> None:
+    add(db, posting(1, location="Madrid"), posting(2, location="Madrid"))
+    html = page(db)
+    assert "0 jobs to review" in html
+    assert "No job passed the rules" in html and "profile.yaml" in html
+    assert "Everything is reviewed" not in html
+
+
+def test_rules_are_applied_again_only_when_something_was_collected(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add(db, posting(1))
+    calls: list[int] = []
+
+    def counting(store: Store, profile: Profile, now: datetime) -> int:
+        calls.append(1)
+        return apply_rules(store, profile, now)
+
+    monkeypatch.setattr("jobranker.web.app.apply_rules", counting)
+    client = site(db)
+    for path in PAGES:
+        client.get(path)
+    # Once at the first request, in case the application was started without a rule run.
+    assert len(calls) == 1
+    with Store(db) as store:
+        store.save(posting(2, title="New Role"), NOW)
+    assert titles(client.get("/").text) == ["New Role", "Role 1"]
+    client.get("/applied")
+    assert len(calls) == 2

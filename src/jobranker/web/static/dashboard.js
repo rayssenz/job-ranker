@@ -22,10 +22,16 @@ document.addEventListener("submit", async (event) => {
     /* The answer is the page after the decision. Its heading and counts replace the old ones. */
     const page = new DOMParser().parseFromString(await response.text(), "text/html");
     const top = page.querySelector(".top");
-    card.remove();
-    if (!top || !document.querySelector(".card")) {
+    const list = page.querySelector("main");
+    if (!top || !list) {
       window.location.reload();
       return;
+    }
+    card.remove();
+    /* With several pages, cards move up from the next page. The whole list is replaced then,
+       so no card is skipped and the page links stay right. The same when no card is left. */
+    if (document.querySelector(".pager") || !document.querySelector(".card")) {
+      document.querySelector("main").replaceWith(document.adoptNode(list));
     }
     document.querySelector(".top").replaceWith(document.adoptNode(top));
     document.title = page.title;
