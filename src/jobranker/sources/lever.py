@@ -6,7 +6,7 @@ import httpx
 
 from jobranker.config import Company
 from jobranker.models import Posting, Remote
-from jobranker.sources.base import FetchResult, SourceError, get_json, items, text
+from jobranker.sources.base import FetchResult, SourceError, get_json, items, places, text
 from jobranker.text import html_to_text
 
 SOURCE = "lever"
@@ -43,6 +43,9 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
                 skipped += 1
                 continue
             categories = item.get("categories")
+            if not isinstance(categories, dict):
+                categories = {}
+            every = categories.get("allLocations")
             postings.append(
                 Posting(
                     source=SOURCE,
@@ -50,8 +53,8 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
                     posting_id=posting_id,
                     company=company.name,
                     title=title,
-                    location=(
-                        text(categories.get("location")) if isinstance(categories, dict) else ""
+                    location=places(
+                        [categories.get("location"), *(every if isinstance(every, list) else [])]
                     ),
                     remote=_REMOTE.get(text(item.get("workplaceType")), Remote.UNKNOWN),
                     url=text(item.get("hostedUrl")),

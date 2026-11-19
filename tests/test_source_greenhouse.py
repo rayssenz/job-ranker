@@ -28,7 +28,8 @@ def test_maps_fields() -> None:
         posting_id="1001",
         company="Northwind Robotics",
         title="ML Engineer",
-        location="Lisbon, Portugal",
+        # The office name follows the location.
+        location="Lisbon, Portugal; Lisbon",
         remote=Remote.UNKNOWN,
         url="https://boards.example.test/northwindrobotics/jobs/1001",
         description="Build & run perception models.\nPython\nPyTorch",
@@ -93,3 +94,20 @@ def test_wrong_shape_raises(body: object) -> None:
 
 def test_feeds_table_lists_three_adapters() -> None:
     assert sorted(FEEDS) == ["ashby", "greenhouse", "lever"]
+
+
+@pytest.mark.parametrize(
+    ("offices", "expected"),
+    [
+        ([{"name": "Lisbon"}, {"name": "Porto"}], "Lisbon, Portugal; Lisbon; Porto"),
+        ([{"name": "Lisbon, Portugal"}, {"name": " Madrid "}], "Lisbon, Portugal; Madrid"),
+        ([{"name": ""}, {}, None, "Graz", {"name": 7}], "Lisbon, Portugal; 7"),
+        ("not a list", "Lisbon, Portugal"),
+        (None, "Lisbon, Portugal"),
+    ],
+)
+def test_office_names_follow_the_location(offices: object, expected: str) -> None:
+    body = sample("greenhouse")
+    body["jobs"][0]["offices"] = offices
+    result = greenhouse.fetch(Recorder(answer(body)).client, GREENHOUSE)
+    assert result.postings[0].location == expected

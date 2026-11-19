@@ -6,7 +6,7 @@ import httpx
 
 from jobranker.config import Company
 from jobranker.models import Posting
-from jobranker.sources.base import FetchResult, SourceError, get_json, items, text
+from jobranker.sources.base import FetchResult, SourceError, get_json, items, places, text, values
 from jobranker.text import html_to_text
 
 SOURCE = "greenhouse"
@@ -33,7 +33,12 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
                 posting_id=posting_id,
                 company=company.name,
                 title=title,
-                location=text(location.get("name")) if isinstance(location, dict) else "",
+                location=places(
+                    [
+                        location.get("name") if isinstance(location, dict) else None,
+                        *values(job.get("offices"), "name"),
+                    ]
+                ),
                 url=text(job.get("absolute_url")),
                 # The content arrives as HTML with its characters escaped once.
                 description=html_to_text(html.unescape(text(job.get("content")))),
