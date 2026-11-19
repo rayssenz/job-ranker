@@ -1,6 +1,6 @@
 import pytest
 
-from jobranker.text import html_to_text, normalise, normalise_company
+from jobranker.text import contains_phrase, html_to_text, normalise, normalise_company
 
 
 def test_html_to_text_strips_tags_and_unescapes_once() -> None:
@@ -90,3 +90,23 @@ def test_html_to_text_separates_blocks_and_drops_code(raw: str, expected: str) -
 )
 def test_normalise_ignores_case_accents_and_unicode_form(first: str, second: str) -> None:
     assert normalise(first) == normalise(second) != ""
+
+
+@pytest.mark.parametrize(
+    ("text", "phrase", "expected"),
+    [
+        ("Junior Data Engineer", "junior", True),
+        ("Internal Tools Engineer", "intern", False),
+        ("Leadership Coach", "lead", False),
+        ("Working Student - Data", "working student", True),
+        ("Student, working hours flexible", "working student", False),
+        ("(JUNIOR) Engineer", "Junior", True),
+        ("Café Manager", "cafe", True),
+        ("Engineer", "", False),
+        ("Engineer", "???", False),
+    ],
+)
+def test_contains_phrase_matches_whole_words_in_order(
+    text: str, phrase: str, expected: bool
+) -> None:
+    assert contains_phrase(normalise(text).split(), phrase) is expected

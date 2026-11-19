@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from html.parser import HTMLParser
 
 # Tags that start or end a line of text.
@@ -71,3 +72,15 @@ def normalise_company(name: str) -> str:
     if len(words) > 1 and words[-1] in _LEGAL_FORMS:
         words = words[:-1]
     return " ".join(words)
+
+
+def contains_phrase(words: Sequence[str], phrase: str) -> bool:
+    """Whether the normalised words of `phrase` follow each other in `words`.
+
+    Whole words only, so `intern` is not found in `internal`. An empty phrase is never found.
+    """
+    wanted = normalise(phrase).split()
+    if not wanted:
+        return False
+    span = len(wanted)
+    return any(list(words[i : i + span]) == wanted for i in range(len(words) - span + 1))
