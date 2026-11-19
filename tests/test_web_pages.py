@@ -657,3 +657,138 @@ def test_fixed_decorations_hold_no_text_of_a_posting(db: Path) -> None:
     assert html.count(EYES) == 1 and html.count(STICKER) == 1
     assert titles(html) == [HOSTILE["title"]]
     assert "<script>alert" not in html and "<img" not in html
+
+
+TOKENS = {
+    "--base": "#f7f0e3",
+    "--card": "#fffdf8",
+    "--brand": "#2433d6",
+    "--accent": "#ff6a13",
+    "--fresh": "#ffd84d",
+    "--warn": "#d92d20",
+    "--ink": "#101347",
+}
+WHITE = "#ffffff"
+
+
+def stylesheet(db: Path) -> str:
+    css: str = site(db).get("/static/dashboard.css").text
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+
+def rules(css: str) -> list[tuple[str, str]]:
+    """Every innermost rule of a stylesheet as its selector and its body."""
+    found = re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+    return [(" ".join(selector.split()), body) for selector, body in found]
+
+
+def luminance(colour: str) -> float:
+    parts = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    red, green, blue = (p / 12.92 if p <= 0.03928 else ((p + 0.055) / 1.055) ** 2.4 for p in parts)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def contrast(first: str, second: str) -> float:
+    light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def test_stylesheet_defines_the_colours_of_the_spec(db: Path) -> None:
+    css = stylesheet(db)
+    for name, value in TOKENS.items():
+        assert f"{name}: {value};" in css
+    # Each colour is written once, as a token, and used by its name everywhere else.
+    for value in TOKENS.values():
+        assert css.count(value) == 1
+
+
+def test_accent_is_used_only_where_the_spec_allows(db: Path) -> None:
+    allowed = (".go", ".badge", ".sticker", ".stamp", ".star")
+    users = [selector for selector, body in rules(stylesheet(db)) if "var(--accent)" in body]
+    assert users
+    for selector in users:
+        for part in selector.split(","):
+            assert any(name in part for name in allowed), selector
+
+
+@pytest.mark.parametrize(
+    ("text", "background"),
+    [
+        ("--ink", "--base"),
+        ("--ink", "--card"),
+        ("--ink", "--accent"),
+        ("--ink", "--fresh"),
+        ("--brand", "--base"),
+        ("--brand", "--card"),
+        ("--warn", "--card"),
+        (WHITE, "--brand"),
+        (WHITE, "--warn"),
+    ],
+)
+def test_text_colours_are_readable_on_their_backgrounds(text: str, background: str) -> None:
+    first, second = TOKENS.get(text, text), TOKENS.get(background, background)
+    assert contrast(first, second) >= 4.5
+
+
+def test_colour_pairs_of_the_stylesheet_are_the_tested_ones(db: Path) -> None:
+    tested = {
+        ("--ink", "--base"),
+        ("--ink", "--card"),
+        ("--ink", "--accent"),
+        ("--ink", "--fresh"),
+        ("--brand", "--base"),
+        ("--brand", "--card"),
+        ("--warn", "--card"),
+        ("#fff", "--brand"),
+        ("#fff", "--warn"),
+    }
+    for selector, body in rules(stylesheet(db)):
+        colour = re.search(r"(?<![-\w])color: (?:var\()?([#\w-]+)\)?;", body)
+        ground = re.search(r"background(?:-color)?: (?:var\()?(--[\w-]+)\)?;", body)
+        if colour and ground:
+            assert (colour.group(1), ground.group(1)) in tested, selector
+
+
+def test_reduced_motion_switches_all_motion_off(db: Path) -> None:
+    css = stylesheet(db)
+    block = re.search(r"@media \(prefers-reduced-motion: reduce\) \{(.*?\})\s*\}", css, re.S)
+    assert block is not None
+    assert "animation: none !important" in block.group(1)
+    assert "transition: none !important" in block.group(1)
+    assert re.search(r"\*,\s*\*::before,\s*\*::after", block.group(1))
+
+
+def test_only_the_first_cards_animate_in(db: Path) -> None:
+    found = dict(rules(stylesheet(db)))
+    assert "animation" in found[".entering .card:nth-child(-n + 8)"]
+    assert "animation" not in found[".card"]
+    assert '<div class="cards entering">' in page(db)
+
+
+def test_stylesheet_has_the_parts_the_script_and_the_page_use(db: Path) -> None:
+    selectors = " ".join(selector for selector, _ in rules(stylesheet(db)))
+    for name in (
+        ".badge",
+        ".badge.bump",
+        ".eyes",
+        ".eye",
+        ".sticker",
+        ".stamp",
+        ".star",
+        ".card.applied-now",
+        ".card.leaving",
+        ".card.fresh",
+        ".button.go",
+        ":focus-visible",
+    ):
+        assert name in selectors, name
+    css = stylesheet(db)
+    for name in ("--x", "--y", "--look-x", "--look-y"):
+        assert f"var({name}" in css
+
+
+def test_long_words_of_a_posting_cannot_widen_the_page(db: Path) -> None:
+    found = dict(rules(stylesheet(db)))
+    for selector in (".card-title", ".meta", ".excerpt", ".full-text"):
+        assert "overflow-wrap: anywhere" in found[selector]
+    assert "overflow-x: clip" in found["body"]

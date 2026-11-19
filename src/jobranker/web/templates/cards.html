@@ -26,7 +26,7 @@
 {% if empty %}
 <p class="empty">{{ empty }}{% if filters and filtered %} <a href="/">Show all jobs</a>{% endif %}</p>
 {% endif %}
-<div class="cards">
+<div class="cards entering">
 {% for card in cards %}
 <article class="card{% if card.fresh %} fresh{% endif %}" id="posting-{{ card.id }}">
   {% if card.fresh %}<span class="eyes" aria-hidden="true"><span class="eye"><i></i></span><span class="eye"><i></i></span></span>{% endif %}
