@@ -1,0 +1,41 @@
+{
+  "jobs": [
+    {
+      "id": 1001,
+      "internal_job_id": 501,
+      "title": "ML Engineer",
+      "updated_at": "2026-11-10T09:00:00-05:00",
+      "requisition_id": "R-1",
+      "location": {"name": "Lisbon, Portugal"},
+      "absolute_url": "https://boards.example.test/northwindrobotics/jobs/1001",
+      "language": "en",
+      "metadata": null,
+      "content": "&lt;div class=&quot;intro&quot;&gt;&lt;p&gt;Build &amp;amp; run perception models.&lt;/p&gt;&lt;/div&gt;&lt;ul&gt;&lt;li&gt;Python&lt;/li&gt;&lt;li&gt;PyTorch&lt;/li&gt;&lt;/ul&gt;",
+      "departments": [{"id": 1, "name": "Engineering", "parent_id": null, "child_ids": []}],
+      "offices": [{"id": 2, "name": "Lisbon", "location": "Portugal", "parent_id": null, "child_ids": []}]
+    },
+    {
+      "id": 1002,
+      "internal_job_id": 502,
+      "title": "Platform Engineer",
+      "updated_at": "2026-11-11T09:00:00-05:00",
+      "location": {"name": "Remote"},
+      "absolute_url": "https://boards.example.test/northwindrobotics/jobs/1002",
+      "language": "en",
+      "metadata": null,
+      "content": "&lt;p&gt;Run the build fleet.&lt;/p&gt;"
+    },
+    {
+      "id": 1003,
+      "internal_job_id": 503,
+      "title": "Field Technician",
+      "updated_at": "2026-11-12T09:00:00-05:00",
+      "location": {"name": "Porto, Portugal"},
+      "absolute_url": "https://boards.example.test/northwindrobotics/jobs/1003",
+      "language": "en",
+      "metadata": null,
+      "content": "&lt;p&gt;Install and service robots.&lt;/p&gt;"
+    }
+  ],
+  "meta": {"total": 3}
+}
