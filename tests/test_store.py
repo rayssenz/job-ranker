@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 from jobranker.models import Posting
-from jobranker.store import Outcome, Store, StoreError
+from jobranker.store import Decision, Outcome, RunSummary, Store, StoreError
 
 T1 = datetime(2026, 11, 19, 8, 0, tzinfo=UTC)
 T2 = datetime(2026, 11, 20, 8, 0, tzinfo=UTC)
+T3 = datetime(2026, 11, 21, 8, 0, tzinfo=UTC)
+T4 = datetime(2026, 11, 22, 8, 0, tzinfo=UTC)
 
 
 def make_posting(**changes: str) -> Posting:
@@ -34,7 +36,7 @@ def test_creates_missing_folder_and_schema_version(tmp_path: Path) -> None:
     path = tmp_path / "data" / "ranker.db"
     Store(path).close()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     connection.close()
 
 
@@ -246,7 +248,7 @@ def assert_refused(path: Path) -> None:
     assert error.value.__cause__ is None
 
 
-@pytest.mark.parametrize("version", [-1, 3, 99])
+@pytest.mark.parametrize("version", [-1, 4, 99])
 def test_version_without_an_upgrade_step_is_refused(tmp_path: Path, version: int) -> None:
     path = tmp_path / "ranker.db"
     connection = sqlite3.connect(path)
@@ -367,8 +369,9 @@ def test_version_1_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> No
         assert store.versions(stored.id) == [("hash-1", T1)]
         assert [row["run_id"] for row in store.runs()] == ["run1"]
         assert store.pending_rules("profile-a", 1) == [stored]
+        assert store.decide(stored.id, Decision.APPLIED, T2)
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     connection.close()
 
 
@@ -475,3 +478,230 @@ def test_passed_groups_are_newest_first_and_can_be_limited(store: Store) -> None
     assert [g.posting for g in store.passed_groups("profile-a", 1, since=T2, limit=10)] == [new]
     assert [g.posting for g in store.passed_groups("profile-a", 1, since=None, limit=1)] == [new]
     assert store.passed_groups("profile-b", 1, since=None, limit=10) == []
+
+
+# The table milestone 2 added, kept here for the same reason as the schema above.
+SCHEMA_V2 = """
+CREATE TABLE rule_results (
+  posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
+  content_hash TEXT NOT NULL,
+  profile_hash TEXT NOT NULL,
+  rules_version INTEGER NOT NULL,
+  passed INTEGER NOT NULL,
+  reasons TEXT NOT NULL,
+  checked_at TEXT NOT NULL
+);
+"""
+
+
+def version_2_database(path: Path) -> None:
+    version_1_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA_V2)
+    connection.execute(
+        "INSERT INTO rule_results VALUES (1, 'hash-1', 'profile-a', 1, 1, '', ?)",
+        (T2.isoformat(),),
+    )
+    connection.execute("PRAGMA user_version = 2")
+    connection.commit()
+    connection.close()
+
+
+def test_version_2_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    version_2_database(path)
+    with Store(path) as store:
+        assert store.count() == 1
+        stored = store.get("greenhouse", "northwindrobotics", "1001")
+        assert stored is not None
+        assert (stored.posting.title, stored.first_seen) == ("ML Engineer", T1)
+        assert store.versions(stored.id) == [("hash-1", T1)]
+        assert [row["run_id"] for row in store.runs()] == ["run1"]
+        # The stored rule result is still the current one.
+        assert store.pending_rules("profile-a", 1) == []
+        assert store.rule_counts("profile-a", 1) == {"checked": 1, "passed": 1, "groups": 1}
+        assert store.review_groups("profile-a", 1) == [stored]
+        assert store.decide(stored.id, Decision.DISMISSED, T3)
+        assert store.decided_groups(Decision.DISMISSED) == [(stored, T3)]
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    connection.close()
+
+
+def review(store: Store) -> list[Posting]:
+    return [s.posting for s in store.review_groups("profile-a", 1)]
+
+
+def decided(store: Store, decision: Decision) -> list[tuple[Posting, datetime]]:
+    return [(s.posting, moment) for s, moment in store.decided_groups(decision)]
+
+
+def decision_rows(store: Store) -> int:
+    return store.dump().count('INSERT INTO "decisions"')
+
+
+def two_passing(store: Store) -> tuple[Posting, Posting]:
+    old, new = make_posting(), make_posting(posting_id="1002", title="Data Engineer")
+    store.save(old, T1)
+    store.save(new, T2)
+    checked(store, old, [])
+    checked(store, new, [])
+    return old, new
+
+
+def test_review_groups_are_the_passing_groups_newest_first_without_a_limit(store: Store) -> None:
+    postings = [make_posting(posting_id=str(n), title=f"Role {n}") for n in range(60)]
+    for number, posting in enumerate(postings):
+        store.save(posting, T1.replace(minute=number))
+        checked(store, posting, [])
+    dropped = make_posting(posting_id="900", title="Dropped Role")
+    store.save(dropped, T2)
+    checked(store, dropped, ["title"])
+    assert review(store) == postings[::-1]
+    assert store.review_groups("profile-b", 1) == []
+
+
+def test_decided_posting_leaves_the_review_list_and_enters_its_tab(store: Store) -> None:
+    old, new = two_passing(store)
+    assert review(store) == [new, old]
+    assert store.decide(id_of(store, old), Decision.APPLIED, T3) is True
+    assert review(store) == [new]
+    assert decided(store, Decision.APPLIED) == [(old, T3)]
+    assert decided(store, Decision.DISMISSED) == []
+
+
+def test_undo_brings_a_posting_back_to_the_review_list(store: Store) -> None:
+    old, new = two_passing(store)
+    store.decide(id_of(store, old), Decision.DISMISSED, T3)
+    store.undo(id_of(store, old))
+    assert review(store) == [new, old]
+    assert decided(store, Decision.DISMISSED) == []
+    assert decision_rows(store) == 0
+
+
+def test_second_decision_replaces_the_first(store: Store) -> None:
+    old, _ = two_passing(store)
+    store.decide(id_of(store, old), Decision.APPLIED, T3)
+    store.decide(id_of(store, old), Decision.DISMISSED, T4)
+    assert decided(store, Decision.APPLIED) == []
+    assert decided(store, Decision.DISMISSED) == [(old, T4)]
+    assert decision_rows(store) == 1
+
+
+def test_decision_on_an_unknown_posting_stores_nothing(store: Store) -> None:
+    two_passing(store)
+    assert store.decide(999, Decision.APPLIED, T3) is False
+    assert decision_rows(store) == 0
+    store.undo(999)
+
+
+def test_decided_groups_are_newest_decision_first(store: Store) -> None:
+    old, new = two_passing(store)
+    store.decide(id_of(store, new), Decision.APPLIED, T3)
+    store.decide(id_of(store, old), Decision.APPLIED, T4)
+    assert decided(store, Decision.APPLIED) == [(old, T4), (new, T3)]
+
+
+def test_decision_on_a_copy_holds_when_the_original_passes_later(store: Store) -> None:
+    feed, copy = make_posting(location="Madrid"), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    checked(store, feed, ["place"])
+    checked(store, copy, [])
+    assert review(store) == [copy]
+    store.decide(id_of(store, copy), Decision.APPLIED, T3)
+    # The original now passes too, and would stand for the group.
+    checked(store, feed, [])
+    assert review(store) == []
+    assert decided(store, Decision.APPLIED) == [(copy, T3)]
+
+
+def test_decision_on_the_original_covers_its_copy(store: Store) -> None:
+    feed, copy = make_posting(), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    checked(store, feed, [])
+    checked(store, copy, [])
+    store.decide(id_of(store, feed), Decision.DISMISSED, T3)
+    checked(store, feed, ["place"])
+    assert review(store) == []
+    assert decided(store, Decision.DISMISSED) == [(feed, T3)]
+
+
+def test_decision_through_another_member_replaces_the_group_decision(store: Store) -> None:
+    feed, copy = make_posting(), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    store.decide(id_of(store, feed), Decision.APPLIED, T3)
+    store.decide(id_of(store, copy), Decision.DISMISSED, T4)
+    assert decided(store, Decision.APPLIED) == []
+    assert decided(store, Decision.DISMISSED) == [(copy, T4)]
+    assert decision_rows(store) == 1
+
+
+def test_undo_through_another_member_clears_the_group(store: Store) -> None:
+    feed, copy = make_posting(), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    checked(store, feed, [])
+    store.decide(id_of(store, feed), Decision.APPLIED, T3)
+    store.undo(id_of(store, copy))
+    assert decision_rows(store) == 0
+    assert review(store) == [feed]
+
+
+def test_decided_group_stays_in_its_tab_when_it_no_longer_passes(store: Store) -> None:
+    old, new = two_passing(store)
+    store.decide(id_of(store, old), Decision.APPLIED, T3)
+    checked(store, old, ["place"])
+    assert decided(store, Decision.APPLIED) == [(old, T3)]
+    # Another profile has no results at all, and the decision is still listed.
+    assert store.review_groups("profile-b", 1) == []
+    checked(store, new, ["level"], profile="profile-b")
+    assert decided(store, Decision.APPLIED) == [(old, T3)]
+
+
+def test_decision_survives_a_change_of_the_posting_text(store: Store) -> None:
+    old, _ = two_passing(store)
+    store.decide(id_of(store, old), Decision.APPLIED, T3)
+    changed = make_posting(description="Build better models.")
+    assert store.save(changed, T4) is Outcome.CHANGED
+    assert decided(store, Decision.APPLIED) == [(changed, T3)]
+
+
+def test_groups_that_merge_after_two_decisions_show_the_newest_one(store: Store) -> None:
+    feed, other = make_posting(), linkedin_posting("900", title="Data Engineer")
+    store.save(feed, T1)
+    store.save(other, T1)
+    store.decide(id_of(store, feed), Decision.APPLIED, T3)
+    store.decide(id_of(store, other), Decision.DISMISSED, T4)
+    # The second posting is retitled and becomes a copy of the first.
+    merged = linkedin_posting("900")
+    store.save(merged, T4)
+    assert link_of(store, merged) == id_of(store, feed)
+    assert decided(store, Decision.APPLIED) == []
+    assert decided(store, Decision.DISMISSED) == [(merged, T4)]
+
+
+def test_run_summaries_are_newest_first_with_counts_per_run(store: Store) -> None:
+    store.log_run("run1", T1, "greenhouse", "Northwind Robotics", fetched=3, new=2)
+    store.log_run("run1", T1, "lever", "Bluefjord Labs", fetched=4, new=1)
+    store.log_run("run2", T2, "greenhouse", "Northwind Robotics", fetched=3, new=5)
+    store.log_run("run2", T2, "lever", "Bluefjord Labs", error="HTTP 404")
+    store.log_run("run2", T2, "linkedin", "machine learning engineer", error="timeout")
+    assert store.run_summaries(10) == [
+        RunSummary(run_id="run2", started_at=T2, sources=3, not_collected=2, new=5),
+        RunSummary(run_id="run1", started_at=T1, sources=2, not_collected=0, new=3),
+    ]
+    assert store.run_summaries(1) == [
+        RunSummary(run_id="run2", started_at=T2, sources=3, not_collected=2, new=5)
+    ]
+
+
+def test_run_failures_list_the_sources_that_were_not_collected(store: Store) -> None:
+    assert store.run_summaries(10) == []
+    store.log_run("run1", T1, "lever", "Bluefjord Labs", error="HTTP 500")
+    store.log_run("run2", T2, "greenhouse", "Northwind Robotics", fetched=3, new=5)
+    store.log_run("run2", T2, "lever", "Bluefjord Labs", error="HTTP 404")
+    assert store.run_failures("run2") == [("lever", "Bluefjord Labs", "HTTP 404")]
+    assert store.run_failures("missing") == []
