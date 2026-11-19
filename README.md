@@ -4,7 +4,7 @@ A command-line program that collects new job postings from public company job fe
 
 ## Status
 
-Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Nothing ranks yet.
+Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Nothing is ranked yet.
 
 ## Quick start
 
@@ -33,10 +33,27 @@ Apify bills each search result. A run asks for at most 200 results in total (`--
 
 The command prints one line per company and per search: how many postings it fetched and how many of them are new, changed or duplicates. Postings are stored in `data/ranker.db`. The two configuration files, `.env` and `data/` are ignored by git.
 
+
+## Filter postings
+
+```bash
+cp config/profile.example.yaml profile.yaml
+uv run jobrank rules
+uv run jobrank list
+```
+
+Edit `profile.yaml` first. It says which places, level words and languages fit, which words to avoid, and which words a title must hold. The file is not committed.
+
+- `jobrank rules` checks every stored posting against the profile and prints how many postings each rule dropped. A posting is dropped only when the mismatch is certain. A posting is checked again only when it or the profile changed.
+- `jobrank list` prints the postings that passed, newest first. `--days 7` limits the list to the last week and `--limit` sets its length.
+
+Neither command sends a request.
+
 ## Design
 
 - [Technical design](docs/specs/2026-11-18-technical-design.md)
 - [Milestone 1: sources and storage](docs/specs/2026-11-19-m1-sources-and-storage.md)
+- [Milestone 2: rules](docs/specs/2026-11-19-m2-rules.md)
 - Decision records live in `docs/decisions/`.
 
 ## How this was built
