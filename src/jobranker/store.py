@@ -86,10 +86,11 @@ _MEMBERS = (
     f"SELECT m.id FROM postings m WHERE {_GROUP.format('m')} ="
     f" (SELECT {_GROUP.format('o')} FROM postings o WHERE o.id = :id)"
 )
-# A decision on any member counts for the group.
+# A decision on any member counts for the group. The decided groups are looked up once,
+# from the decisions, and not once per posting, which would read every posting each time.
 _UNDECIDED = (
-    "NOT EXISTS (SELECT 1 FROM decisions d JOIN postings m ON m.id = d.posting_id"
-    f" WHERE {_GROUP.format('m')} = {_GROUP.format('p')})"
+    f"{_GROUP.format('p')} NOT IN (SELECT {_GROUP.format('m')}"
+    " FROM decisions d CROSS JOIN postings m ON m.id = d.posting_id)"
 )
 
 

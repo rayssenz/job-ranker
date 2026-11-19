@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -705,3 +706,20 @@ def test_run_failures_list_the_sources_that_were_not_collected(store: Store) -> 
     store.log_run("run2", T2, "lever", "Bluefjord Labs", error="HTTP 404")
     assert store.run_failures("run2") == [("lever", "Bluefjord Labs", "HTTP 404")]
     assert store.run_failures("missing") == []
+
+
+def test_review_list_stays_fast_with_many_postings(store: Store) -> None:
+    # Descriptions of a real length, so that reading every posting again costs something.
+    text = "Build models for harbour cranes. " * 150
+    postings = [
+        make_posting(posting_id=str(n), title=f"Role {n}", description=text) for n in range(1500)
+    ]
+    for posting in postings:
+        store.save(posting, T1)
+    stored = store.pending_rules("profile-a", 1)
+    store.save_rule_results([(item, []) for item in stored], "profile-a", 1, T2)
+    store.decide(stored[0].id, Decision.APPLIED, T3)
+    started = time.perf_counter()
+    assert len(store.review_groups("profile-a", 1)) == 1499
+    # Looking up the decided groups once takes a few milliseconds. Once per posting takes seconds.
+    assert time.perf_counter() - started < 0.3
