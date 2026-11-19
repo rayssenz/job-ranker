@@ -154,6 +154,7 @@ One SQLite file, `data/ranker.db` by default, created on first use with a record
 - 0003: collect from public company feeds and from one search source that needs no login.
 - 0004: store everything in one SQLite file through the standard library.
 - 0005: recognise duplicates across sources by company name and title.
+- 0006: keep the token out of output and treat outside data as untrusted.
 
 ## Dependencies added
 
