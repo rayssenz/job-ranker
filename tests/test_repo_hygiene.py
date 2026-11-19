@@ -10,6 +10,8 @@ PRIVATE_PATHS = [
     "profile.yaml",
     "config/profile.yaml",
     "config/companies.yaml",
+    "searches.yaml",
+    "config/searches.yaml",
     ".env",
     ".env.local",
     "nested/.env",
@@ -24,6 +26,7 @@ PRIVATE_PATHS = [
 PUBLIC_PATHS = [
     "config/profile.example.yaml",
     "config/companies.example.yaml",
+    "config/searches.example.yaml",
     ".env.example",
     "evals/cases.jsonl",
     "src/jobranker/cli.py",
@@ -35,7 +38,7 @@ def is_private(path: str) -> bool:
     *folders, name = path.split("/")
     if "data" in folders or name.endswith(".db"):
         return True
-    if name in ("profile.yaml", "companies.yaml", ".env"):
+    if name in ("profile.yaml", "companies.yaml", "searches.yaml", ".env"):
         return True
     if name.startswith(".env.") and name != ".env.example":
         return True
