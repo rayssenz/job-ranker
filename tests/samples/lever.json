@@ -1,0 +1,51 @@
+[
+  {
+    "id": "0a000000-0000-4000-8000-000000000001",
+    "text": "Data Engineer",
+    "categories": {
+      "location": "Oslo",
+      "commitment": "Full-time",
+      "team": "Data",
+      "department": "Engineering",
+      "allLocations": ["Oslo"]
+    },
+    "country": "NO",
+    "workplaceType": "hybrid",
+    "createdAt": 1788199939703,
+    "openingPlain": "We move data.",
+    "descriptionPlain": "We move data.\nYou will own the pipelines.",
+    "description": "<div>We move data.</div><div>You will own the pipelines.</div>",
+    "lists": [
+      {"text": "Requirements", "content": "<li>SQL</li><li>Airflow &amp; dbt</li>"},
+      {"text": "Benefits", "content": "<li>Train pass</li>"}
+    ],
+    "additionalPlain": "Apply with a short note.",
+    "additional": "<div>Apply with a short note.</div>",
+    "hostedUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000001",
+    "applyUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000001/apply"
+  },
+  {
+    "id": "0a000000-0000-4000-8000-000000000002",
+    "text": "Analytics Engineer",
+    "categories": {"location": "Remote, Norway", "team": "Data", "allLocations": ["Remote, Norway"]},
+    "country": "NO",
+    "workplaceType": "remote",
+    "createdAt": 1788199939704,
+    "descriptionPlain": "Model the warehouse.",
+    "lists": [],
+    "additionalPlain": "",
+    "hostedUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000002",
+    "applyUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000002/apply"
+  },
+  {
+    "id": "0a000000-0000-4000-8000-000000000003",
+    "text": "Office Coordinator",
+    "categories": {"location": "Bergen", "allLocations": ["Bergen"]},
+    "country": "NO",
+    "workplaceType": "unspecified",
+    "createdAt": 1788199939705,
+    "descriptionPlain": "Keep the office running.",
+    "hostedUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000003",
+    "applyUrl": "https://jobs.example.test/bluefjord/0a000000-0000-4000-8000-000000000003/apply"
+  }
+]

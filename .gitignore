@@ -1,5 +1,6 @@
 profile.yaml
 companies.yaml
+searches.yaml
 data/
 .env
 .env.*

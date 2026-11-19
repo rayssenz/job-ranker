@@ -1,0 +1,19 @@
+# Copy to config/companies.yaml and replace the entries. That file is not committed.
+# These companies are made up.
+#
+# name:   written as the company writes it. Duplicates are matched on it.
+# feed:   greenhouse, lever or ashby
+# token:  the board name in the company's job page address.
+#         A token made only of digits must be quoted, for example "0123".
+# region: lever only, global (default) or eu
+companies:
+  - name: Northwind Robotics
+    feed: greenhouse
+    token: northwindrobotics
+  - name: Bluefjord Labs
+    feed: lever
+    token: bluefjord
+    region: eu
+  - name: Tessellate Systems
+    feed: ashby
+    token: tessellate

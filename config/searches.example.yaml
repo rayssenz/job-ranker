@@ -1,0 +1,13 @@
+# Copy to config/searches.yaml and replace the entries. That file is not committed.
+#
+# keywords:      search words
+# location:      city, region or country
+# posted_within: day (default), week or month
+# limit:         most results to ask for, 1 to 500 (default 50)
+searches:
+  - keywords: machine learning engineer
+    location: Lisbon
+  - keywords: data engineer
+    location: Portugal
+    posted_within: week
+    limit: 25
