@@ -52,24 +52,32 @@ def _run_source(
     store: Store,
     now: Callable[[], datetime],
 ) -> SourceReport:
-    """Fetch one source and save its postings. A failure becomes the report's error."""
+    """Fetch one source and save its postings.
+
+    A failed fetch becomes the report's error. A posting that cannot be saved is counted
+    as skipped, so the postings after it are still stored.
+    """
     try:
         result = fetch()
-        counts = dict.fromkeys(Outcome, 0)
-        for posting in result.postings:
-            counts[store.save(posting, now())] += 1
     except SourceError as error:
         return replace(report, error=error.reason)
     except Exception as error:  # noqa: BLE001 - one broken source must not stop the others
         # Only the class name is kept: the message could hold a token or posting text.
         return replace(report, error=f"internal error: {type(error).__name__}")
+    counts = dict.fromkeys(Outcome, 0)
+    unsaved = 0
+    for posting in result.postings:
+        try:
+            counts[store.save(posting, now())] += 1
+        except Exception:  # noqa: BLE001 - one broken posting must not stop the others
+            unsaved += 1
     return replace(
         report,
         fetched=len(result.postings),
         new=counts[Outcome.NEW],
         changed=counts[Outcome.CHANGED],
         duplicate=counts[Outcome.DUPLICATE],
-        skipped=result.skipped,
+        skipped=result.skipped + unsaved,
     )
 
 

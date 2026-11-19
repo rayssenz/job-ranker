@@ -224,3 +224,21 @@ def test_report_lines() -> None:
     assert with_skipped.line().endswith("duplicate 0, skipped 2")
     failed = SourceReport("ashby", "Tessellate Systems", error="HTTP 404")
     assert failed.line() == "ashby      Tessellate Systems: HTTP 404"
+
+
+def test_posting_that_cannot_be_saved_does_not_stop_the_rest(store: Store) -> None:
+    broken = copy.deepcopy(sample("greenhouse"))
+    # A lone surrogate, as left by a cut-off emoji, cannot be written to the database.
+    broken["jobs"][1]["content"] = "bad \ud83d end"
+    body = json.dumps(broken).encode()
+    reports = run(
+        store,
+        routes(greenhouse=lambda r: httpx.Response(200, content=body)),
+        companies=[GREENHOUSE],
+        searches=[],
+    )
+    report = reports[0]
+    assert report.error is None
+    assert (report.fetched, report.new, report.skipped) == (3, 2, 1)
+    assert store.count() == 2
+    assert [(row["new"], row["skipped"], row["error"]) for row in store.runs()] == [(2, 1, None)]
