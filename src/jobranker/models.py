@@ -38,4 +38,8 @@ class Posting(BaseModel):
 
     @property
     def match_key(self) -> str:
-        return f"{normalise_company(self.company)}|{normalise(self.title)}"
+        """Company and title in normalised form. Empty when either has no word left."""
+        company, title = normalise_company(self.company), normalise(self.title)
+        if not company or not title:
+            return ""
+        return f"{company}|{title}"

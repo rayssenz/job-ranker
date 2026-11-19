@@ -43,6 +43,24 @@ def test_description_is_plain_text() -> None:
             assert mark not in posting.description
 
 
+def description_of(content: str) -> str:
+    body = {"jobs": [{"id": 7, "title": "Engineer", "content": content}]}
+    (posting,) = greenhouse.fetch(Recorder(answer(body)).client, GREENHOUSE).postings
+    return posting.description
+
+
+def test_escaped_content_is_unescaped_and_stripped_of_tags() -> None:
+    content = (
+        "&lt;div&gt;&lt;p&gt;Build &amp;amp; run&lt;/p&gt;"
+        "&lt;ul&gt;&lt;li&gt;Python&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;"
+    )
+    assert description_of(content) == "Build & run\nPython"
+
+
+def test_angle_brackets_written_as_text_are_kept() -> None:
+    assert description_of("&lt;p&gt;Use Vec&amp;lt;T&amp;gt;&lt;/p&gt;") == "Use Vec<T>"
+
+
 def test_empty_board_is_not_an_error() -> None:
     result = greenhouse.fetch(
         Recorder(answer({"jobs": [], "meta": {"total": 0}})).client, GREENHOUSE

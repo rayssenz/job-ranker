@@ -52,6 +52,23 @@ def test_match_key_differs_for_other_title() -> None:
     assert make_posting().match_key != make_posting(title="Data Engineer").match_key
 
 
+def test_match_key_tells_c_plus_plus_c_sharp_and_c_apart() -> None:
+    titles = ("C++ Developer", "C# Developer", "C Developer")
+    assert len({make_posting(title=title).match_key for title in titles}) == 3
+
+
+def test_match_key_tells_dot_net_from_net() -> None:
+    assert (
+        make_posting(title=".NET Developer").match_key
+        != make_posting(title="NET Developer").match_key
+    )
+
+
+@pytest.mark.parametrize("changes", [{"title": "???"}, {"company": "---"}])
+def test_match_key_is_empty_without_a_company_or_title_word(changes: dict[str, str]) -> None:
+    assert make_posting(**changes).match_key == ""
+
+
 def test_posting_is_frozen() -> None:
     posting = make_posting()
     with pytest.raises(ValidationError):

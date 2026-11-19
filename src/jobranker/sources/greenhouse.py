@@ -1,5 +1,7 @@
 """Greenhouse job board feed. Documentation: developers.greenhouse.io/job-board.html"""
 
+import html
+
 import httpx
 
 from jobranker.config import Company
@@ -33,8 +35,8 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
                 title=title,
                 location=text(location.get("name")) if isinstance(location, dict) else "",
                 url=text(job.get("absolute_url")),
-                # The content arrives as HTML with its characters escaped.
-                description=html_to_text(text(job.get("content"))),
+                # The content arrives as HTML with its characters escaped once.
+                description=html_to_text(html.unescape(text(job.get("content")))),
             )
         )
     return FetchResult(postings, skipped)
