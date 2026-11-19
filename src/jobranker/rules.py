@@ -58,6 +58,10 @@ _LANGUAGE_KEY = {normalise(name): key for key, names in _LANGUAGE_NAMES.items() 
 _SPEAKER_WORDS = frozenset({"speaking", "speaker", "speakers", "sprechend", "sprechende"})
 # The German joined form, as in `deutschsprachig` and `deutschsprachiger`.
 _JOINED_FORM = "sprachig"
+# Between two language names: a choice of languages, or a need for both.
+_CHOICE_WORDS = frozenset({"or", "oder"})
+_BOTH_WORDS = frozenset({"and", "und"})
+_REMOTE_WORD = "remote"
 
 
 def _holds_any(words: Sequence[str], phrases: Sequence[str]) -> bool:
@@ -68,7 +72,9 @@ def _place(posting: Posting, profile: Profile, location: Sequence[str]) -> bool:
     # An empty location says nothing, so it is not a mismatch.
     if not location or _holds_any(location, profile.places):
         return True
-    if not profile.remote.accept or posting.remote is not Remote.YES:
+    # The location can say what the remote field of a feed leaves out.
+    remote = posting.remote is Remote.YES or _REMOTE_WORD in location
+    if not profile.remote.accept or not remote:
         return False
     return not profile.remote.places or _holds_any(location, profile.remote.places)
 
@@ -77,22 +83,36 @@ def _level(profile: Profile, title: Sequence[str]) -> bool:
     return not _holds_any(title, profile.levels.reject) or _holds_any(title, profile.levels.accept)
 
 
-def _asked_languages(title: Sequence[str]) -> set[str]:
-    """The languages a title asks a speaker of, as in `Dutch Speaking`."""
-    asked: set[str] = set()
-    for index, word in enumerate(title):
-        following = title[index + 1] if index + 1 < len(title) else ""
-        if word in _LANGUAGE_KEY and following in _SPEAKER_WORDS:
-            asked.add(_LANGUAGE_KEY[word])
-        name, joined, _ = word.partition(_JOINED_FORM)
-        if joined and name in _LANGUAGE_KEY:
-            asked.add(_LANGUAGE_KEY[name])
-    return asked
+def _speaker_request(title: Sequence[str], speaker: int) -> tuple[list[str], bool]:
+    """The languages listed before the speaker word at `speaker`, and whether all are needed.
+
+    `Dutch or English speaking` and `Dutch/English speaking` offer a choice.
+    `Dutch and English speaking` needs both.
+    """
+    asked: list[str] = []
+    every = False
+    for word in reversed(title[:speaker]):
+        if word in _LANGUAGE_KEY:
+            asked.append(_LANGUAGE_KEY[word])
+        elif asked and word in _BOTH_WORDS:
+            every = True
+        elif not (asked and word in _CHOICE_WORDS):
+            break
+    return asked, every
 
 
 def _language(profile: Profile, title: Sequence[str]) -> bool:
     known = {_LANGUAGE_KEY.get(normalise(name), normalise(name)) for name in profile.languages}
-    return _asked_languages(title) <= known
+    for index, word in enumerate(title):
+        name, joined, _ = word.partition(_JOINED_FORM)
+        if joined and name in _LANGUAGE_KEY and _LANGUAGE_KEY[name] not in known:
+            return False
+        if word in _SPEAKER_WORDS:
+            asked, every = _speaker_request(title, index)
+            fits = all if every else any
+            if asked and not fits(language in known for language in asked):
+                return False
+    return True
 
 
 def check(posting: Posting, profile: Profile) -> tuple[Reason, ...]:

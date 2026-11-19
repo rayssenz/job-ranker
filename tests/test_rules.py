@@ -72,8 +72,13 @@ def test_other_place_is_dropped(location: str) -> None:
         ("Remote, Portugal", Remote.YES, True),
         ("Remote - United States", Remote.YES, False),
         ("Remote", Remote.YES, False),
-        ("Remote - Europe", Remote.UNKNOWN, False),
-        ("Remote - Europe", Remote.NO, False),
+        # The word in the location marks a posting as remote when the field does not.
+        ("Remote - Europe", Remote.UNKNOWN, True),
+        ("Remote Portugal", Remote.UNKNOWN, True),
+        ("Madrid; Remote, Portugal", Remote.NO, True),
+        ("Remote - United States", Remote.UNKNOWN, False),
+        ("Europe", Remote.UNKNOWN, False),
+        ("Remotely Operated Vehicles, Europe", Remote.UNKNOWN, False),
     ],
 )
 def test_remote_posting_needs_an_accepted_remote_place(
@@ -188,3 +193,25 @@ def test_every_failing_rule_is_reported_in_a_fixed_order() -> None:
 
 def test_reason_codes_are_fixed_words() -> None:
     assert [reason.value for reason in Reason] == ["place", "level", "language", "avoid", "title"]
+
+
+@pytest.mark.parametrize(
+    ("title", "passes"),
+    [
+        # A list of languages is a choice: one known language is enough.
+        ("Support Engineer (German/French/English Speaking)", True),
+        ("Support Engineer - French or English Speaking", True),
+        ("Support Engineer - Dutch oder Englisch sprechend", True),
+        ("Support Engineer (German/French/Dutch Speaking)", False),
+        ("Support Engineer - French or Spanish Speaker", False),
+        # With `and`, every language is needed.
+        ("Support Engineer, Dutch and English Speaker", False),
+        ("Support Engineer (English- and Portuguese-Speaking)", True),
+        ("Support Engineer, Englisch und Deutsch sprechend", False),
+        # Words before the list do not join it.
+        ("Dutch Market Engineer, English Speaking", True),
+    ],
+)
+def test_language_rule_reads_a_list_of_languages(title: str, passes: bool) -> None:
+    result = check(posting(title=title), PROFILE)
+    assert result == (() if passes else (Reason.LANGUAGE,))
