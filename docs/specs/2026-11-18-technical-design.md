@@ -4,13 +4,13 @@ Status: approved on 2026-11-18.
 
 ## 1. What it does
 
-A command-line program that collects new job postings from public company job feeds, drops the ones that cannot fit a profile, has Claude judge the rest, and sends a short list to Telegram. It measures its ranking against a set of hand-marked postings, and CI fails when that measurement drops.
+A command-line program that collects new job postings from public company job feeds and from one job search source, drops the ones that cannot fit a profile, has Claude judge the rest, and sends a short list to Telegram. It measures its ranking against a set of hand-marked postings, and CI fails when that measurement drops.
 
 ## 2. Scope
 
 In scope
 
-- Collect postings from public job feeds for a configured list of companies.
+- Collect postings from public job feeds for a configured list of companies, and from one search source for a configured list of searches.
 - Drop postings that cannot fit, using fixed rules, with a reason for each drop.
 - Have Claude judge the rest: yes or no, with reasons.
 - Send a short list of new yes postings to Telegram through a Hermes agent.
@@ -30,7 +30,8 @@ Never
 
 ## 3. Constraints
 
-- No API key. Model calls go through Claude Code's non-interactive mode on a logged-in subscription.
+- No model API key. Model calls go through Claude Code's non-interactive mode on a logged-in subscription.
+- The search source runs on the Apify service and needs one Apify token, read from the environment or a local `.env` file that is not committed.
 - The repository is public, so private data is kept out of it.
 - Python 3.12 or newer.
 
@@ -50,15 +51,23 @@ feeds -> normalise -> store -> rules -> judge -> shortlist -> Hermes -> Telegram
 
 ### Sources
 
-Each feed type has its own adapter. All three feeds are public and need no login: Greenhouse (`GET boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever and Ashby (public posting endpoints). Companies are listed in `config/companies.yaml` with their feed type and token. A failing feed is logged and skipped, and the run continues.
+Each source has its own adapter. There are two kinds.
+
+Company feeds return every open posting of one company. All three are public and need no login: Greenhouse (`GET boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever (`GET api.lever.co/v0/postings/{token}`) and Ashby (`GET api.ashbyhq.com/posting-api/job-board/{token}`). Companies are listed in `config/companies.yaml` with their feed type and token.
+
+The search source returns postings that match search words and a place. It is LinkedIn, read through an Apify actor that fetches the public job pages without a login. Searches are listed in `config/searches.yaml`. Each result is billed by Apify, so a run asks for a limited number of results and every request carries a cost cap.
+
+A failing source is logged and skipped, and the run continues. The milestone 1 spec has the exact requests and the field mapping.
 
 ### Posting record
 
 Each posting is stored with its source, company, title, location, remote flag, URL, description as plain text, first-seen time and a content hash. A posting is new when its source ID has not been seen before. A changed hash is recorded, and the posting is not sent again.
 
+The same job can arrive from a company feed and from the search source. A new posting with the same company name and title as a stored posting from another source is saved with a link to that posting and is not treated as new.
+
 ### Storage
 
-One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed.
+One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log.
 
 ### Profile
 
@@ -122,13 +131,14 @@ A run judges at most 40 postings by default. A judge failure is logged and the p
 src/jobranker/   cli, sources/, models, store, rules, judge/, shortlist, evaluate
 tests/
 evals/           cases.jsonl, recordings/, report.md, thresholds.yaml
-config/          companies.example.yaml, profile.example.yaml
+config/          companies.example.yaml, searches.example.yaml, profile.example.yaml
 integrations/    hermes/, claude-code/
 docs/            specs/, decisions/
 .github/workflows/ci.yml
+.env.example
 ```
 
-Stack: Python 3.12 or newer, uv for environments, ruff, a type checker, pytest, httpx, pydantic, typer, and SQLite from the standard library.
+Stack: Python 3.12 or newer, uv for environments, ruff, a type checker, pytest, httpx, pydantic, PyYAML, typer, and SQLite from the standard library.
 
 ## 9. Process
 
@@ -155,6 +165,9 @@ Two things are left for later: marking by Telegram reply, and growing the set to
 - Non-interactive use of a subscription may change in limits or terms. The judge sits behind an interface, so another backend can be added.
 - A small evaluation set gives a noisy number. The held-out split and the stated sample sizes limit over-claiming.
 - Feed formats change. The adapters are small and tested against saved samples.
+- The search source depends on an actor published by a third party. It can change its output, change its price or disappear. The actor name is a setting and its output is mapped in one function.
+- Reading LinkedIn job pages through a scraping service is outside LinkedIn's terms of use. No account is used, and the source can be left out by not configuring a search.
+- Duplicates are matched on company name and title only. A different spelling in the two sources is missed, and the same title in two places can be linked to the wrong copy.
 - Replacing a company name can miss a mention inside the text. The local check reduces this and cannot remove it.
 - A scheduled run with no interactive session open is untested. The fallback is macOS launchd piping to `hermes send`, or running the daily command by hand.
 - The evaluation cases republish job-advert text. Cases keep only the text needed for judging.
