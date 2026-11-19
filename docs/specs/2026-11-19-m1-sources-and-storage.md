@@ -27,7 +27,7 @@ The addresses below were checked against each provider's documentation and with 
 
 Notes:
 
-- Greenhouse returns the description only with `content=true`, as HTML with its characters escaped. The adapter unescapes the content once before the tags are removed, so text such as `List&lt;String&gt;` inside the HTML stays text.
+- Greenhouse returns the description only with `content=true`, as HTML with its characters escaped. The adapter unescapes the content once before the tags are removed, so text such as `List&lt;String&gt;` inside the HTML stays text. Table cells and list entries become separate lines, and the content of `script` and `style` tags is dropped.
 - Lever's `descriptionPlain` leaves out the requirement lists and the closing text. The adapter joins all three parts.
 - Lever's documentation gives `skip` and `limit` and no maximum page size. The adapter asks for pages of 100 until a page comes back with fewer. It stops with an error after 50 pages, so a feed that ignores `skip` cannot be read forever.
 - Ashby's `id` is present in the live response and in no documented field table. When it is missing, the adapter uses `jobUrl` as the ID. Ashby postings with `isListed` false are skipped.
@@ -40,7 +40,7 @@ Notes:
 | Documentation | docs.apify.com/api/v2/act-run-sync-get-dataset-items-post |
 | Default actor | `valig~linkedin-jobs-scraper` |
 | Request body | `keywords`, `location`, `datePosted`, `limit` |
-| Cost cap | `maxTotalChargeUsd` in the query string, enforced by Apify |
+| Cost cap | `maxTotalChargeUsd` and `maxItems` in the query string, enforced by Apify. The first applies to actors billed per event, the second to actors billed per result |
 | Success | status 201 with a JSON list of results |
 | Token | `APIFY_TOKEN`, read from the environment or a local `.env` file, sent in the `Authorization` header |
 
@@ -88,7 +88,7 @@ Source, board token, posting ID (stored as text), company name, title, location,
 
 - A posting is identified by source, board token and posting ID. LinkedIn postings have no board token, and the actor name is not part of the identity, so changing the actor does not make stored postings look new.
 - The content hash is SHA-256 over the title, location, remote flag and description.
-- The match key is the company name and the title, each in lower case with punctuation removed, and the company name without a legal-form ending such as GmbH, AG, SE, Inc, Ltd or LLC. A `+`, a `#` and a `.` that starts a word are kept as the words `plus`, `sharp` and `dot`, so `C++`, `C#`, `C` and `.NET` give different keys. When the company name or the title has no word left, the match key is empty.
+- The match key is the company name and the title, each with case, accents and punctuation removed, and the company name without a legal-form ending such as GmbH, AG, SE, Inc, Ltd or LLC. A `+`, a `#` and a `.` that starts a word are kept as the words `plus`, `sharp` and `dot`, so `C++`, `C#`, `C` and `.NET` give different keys. When the company name or the title has no word left, the match key is empty.
 - The company name and the URL are not part of the content hash. When a posting is seen again with the same hash and a different company name or URL, the stored values and the match key are updated, and the posting is not counted as changed.
 
 ### Duplicates
@@ -101,7 +101,7 @@ The rule ignores the location, because the sources write it differently. A compa
 
 ### Storage
 
-One SQLite file, `data/ranker.db` by default, created on first use with a recorded schema version. Three tables:
+One SQLite file, `data/ranker.db` by default, created on first use with a recorded schema version. A file that already holds other tables is refused and left unchanged. Three tables:
 
 - postings: one row per posting.
 - posting versions: one row each time a posting's hash changes, with the time.
@@ -124,8 +124,8 @@ One SQLite file, `data/ranker.db` by default, created on first use with a record
 2. Running it twice on the same responses stores nothing new the second time and reports zero new postings.
 3. A posting whose text changed between two runs keeps its first-seen time, gets its new hash recorded with the time, and is counted as changed, not new.
 4. Two postings with the same ID on different boards or sources are stored as two postings.
-5. A posting from LinkedIn with the same company and title as a stored feed posting is saved with a link to it and counted as a duplicate. Company names that differ only in case, punctuation or legal-form ending still match. Two postings with the same title from the same source are not linked.
-6. A source that answers with an error status, times out or returns something that is not the expected JSON is recorded in the run log with the company or search and the reason. The other sources are still collected, and the command exits 0. It exits 1 when every source failed or when no source could be tried, for example with only searches configured and no token. A single posting that lacks an ID or a title is skipped and counted, and the rest of its source is still stored.
+5. A posting from LinkedIn with the same company and title as a stored feed posting is saved with a link to it and counted as a duplicate. Company names that differ only in case, accents, Unicode form, punctuation or legal-form ending still match. Two postings with the same title from the same source are not linked.
+6. A source that answers with an error status, times out or returns something that is not the expected JSON is recorded in the run log with the company or search and the reason. The other sources are still collected, and the command exits 0. It exits 1 when every source failed or when no source could be tried, for example with only searches configured and no token. A redirect is not followed and counts as an error status. A single posting that lacks an ID or a title, or that cannot be saved, is skipped and counted, and the rest of its source is still stored.
 7. A configuration file with an unknown feed type, a missing field or a duplicate entry is rejected before any request is made, with a message that names the entry.
 8. With neither configuration file present, the command stops with a message that points to the example files.
 9. Each feed adapter builds the request shown in the feeds table, including Lever's EU host and Lever's paging.
