@@ -34,6 +34,7 @@ Never
 - The search source runs on the Apify service and needs one Apify token, read from the environment or a local `.env` file that is not committed.
 - The repository is public, so private data is kept out of it.
 - Python 3.12 or newer.
+- The dashboard uses FastAPI, Uvicorn, Jinja2 and python-multipart. It needs no JavaScript build and loads no file from another machine.
 
 ## 4. Approach
 
@@ -67,7 +68,7 @@ The same job can arrive from a company feed and from the search source. A new po
 
 ### Storage
 
-One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log. Milestone 2 adds the rule results. An older database is upgraded in place when it is opened.
+One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log. Milestone 2 adds the rule results. Milestone 3 adds the decisions. An older database is upgraded in place when it is opened.
 
 ### Profile
 
@@ -76,6 +77,16 @@ One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and ru
 ### Rules
 
 The rules are pure functions over a posting and the profile. They check for a place or remote mismatch, a rejected level word in the title, a title that asks for a speaker of a language the profile lacks, a match on the avoid list, and a title without any of the wanted words. Each rule returns pass or a reason code, and a rule drops a posting only when the mismatch is certain. The result is stored per posting and computed again when the posting, the profile or the rules change. The milestone 2 spec has the exact conditions. No model is involved, so the same input always gives the same output.
+
+### Dashboard
+
+`jobrank dashboard` applies the rules, starts a web application on `127.0.0.1` and opens it in the browser. The milestone 3 spec and decision record 0009 have the details.
+
+Four tabs, each with its count. "To review" shows the groups of linked postings that passed the rules and have no decision, newest first, fifty per page, with a switch for student and junior titles and a search over title, company and location. "Applied" and "Not for me" show the decided groups. "Runs" shows the last ten runs and the sources that the latest run did not collect.
+
+A card has two decisions, "Applied" and "Not for me", and the decided tabs have "Undo". A decision is stored with the posting that was shown and counts for its whole group. A decided group stays in its tab when it no longer passes the rules, so a change of the profile removes no application from the list.
+
+The application shows text from third parties and changes stored data. Every text is escaped when the page is built. A posting link is shown only when it is a plain `http` or `https` address. A request is served only when its `Host` names this machine and the port of this start. A request that changes data needs a `POST`, a token that is new at each start, and no foreign `Origin`. Every answer carries a content security policy and the headers that forbid framing and type guessing. The framework's automatic API pages are off.
 
 ### Judge
 
