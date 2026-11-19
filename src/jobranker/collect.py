@@ -91,11 +91,16 @@ def collect(
     max_results: int = DEFAULT_MAX_RESULTS,
     actor: str = linkedin.DEFAULT_ACTOR,
     now: Callable[[], datetime] = utc_now,
+    on_start: Callable[[SourceReport], None] | None = None,
+    on_finish: Callable[[SourceReport], None] | None = None,
 ) -> list[SourceReport]:
     """Collect from every source and return one report per company and per search.
 
     Company feeds run first, so a posting that a feed and a search both return is stored
     as the feed's posting and the search's copy is linked to it.
+
+    `on_start` is called with the empty report of a source before it is collected, and
+    `on_finish` with its final report after the log row is written.
     """
     run_id = uuid.uuid4().hex
     started_at = now()
@@ -115,15 +120,23 @@ def collect(
             error=report.error,
         )
         reports.append(report)
+        if on_finish is not None:
+            on_finish(report)
+
+    def start(report: SourceReport) -> SourceReport:
+        if on_start is not None:
+            on_start(report)
+        return report
 
     for company in companies:
         fetch_feed = partial(FEEDS[company.feed], client, company)
-        finish(_run_source(SourceReport(company.feed, company.name), fetch_feed, store, now))
+        report = start(SourceReport(company.feed, company.name))
+        finish(_run_source(report, fetch_feed, store, now))
 
     # Every result is billed, so the run limit counts what was asked for, not what came back.
     remaining = max_results
     for search in searches:
-        report = SourceReport(linkedin.SOURCE, f"{search.keywords} / {search.location}")
+        report = start(SourceReport(linkedin.SOURCE, f"{search.keywords} / {search.location}"))
         if token is None:
             finish(replace(report, error=NO_TOKEN))
             continue

@@ -242,3 +242,44 @@ def test_posting_that_cannot_be_saved_does_not_stop_the_rest(store: Store) -> No
     assert (report.fetched, report.new, report.skipped) == (3, 2, 1)
     assert store.count() == 2
     assert [(row["new"], row["skipped"], row["error"]) for row in store.runs()] == [(2, 1, None)]
+
+
+def test_callbacks_are_called_around_every_source(store: Store) -> None:
+    events: list[tuple[str, str, str | None]] = []
+    recorder = routes()
+    reports = collect(
+        [GREENHOUSE, LEVER],
+        SEARCHES,
+        store,
+        recorder.client,
+        token=TOKEN,
+        max_results=50,
+        now=lambda: NOW,
+        on_start=lambda report: events.append(("start", report.target, None)),
+        on_finish=lambda report: events.append(("finish", report.target, report.error)),
+    )
+    assert events == [
+        ("start", "Northwind Robotics", None),
+        ("finish", "Northwind Robotics", None),
+        ("start", "Bluefjord Labs", None),
+        ("finish", "Bluefjord Labs", None),
+        ("start", "machine learning engineer / Lisbon", None),
+        ("finish", "machine learning engineer / Lisbon", None),
+        ("start", "data engineer / Portugal", None),
+        ("finish", "data engineer / Portugal", "skipped: run limit reached"),
+    ]
+    assert len(reports) == 4
+
+
+def test_finish_callback_runs_after_the_log_row_is_written(store: Store) -> None:
+    rows_seen: list[int] = []
+    collect(
+        [GREENHOUSE, LEVER],
+        [],
+        store,
+        routes().client,
+        token=None,
+        now=lambda: NOW,
+        on_finish=lambda report: rows_seen.append(len(store.runs())),
+    )
+    assert rows_seen == [1, 2]
