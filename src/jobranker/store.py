@@ -83,20 +83,30 @@ class Store:
     """One SQLite file. Creates the folder and the schema on first use."""
 
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path)
-        self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA foreign_keys = ON")
-        version = self._db.execute("PRAGMA user_version").fetchone()[0]
-        if version == 0:
-            self._db.executescript(_SCHEMA)
-            self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            self._db.commit()
-        elif version != SCHEMA_VERSION:
-            self._db.close()
+        db: sqlite3.Connection | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(path)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version == 0:
+                db.executescript(_SCHEMA)
+                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                db.commit()
+        except (sqlite3.Error, OSError) as error:
+            if db is not None:
+                db.close()
+            # The caller gets one kind of error and a message that names the file.
+            raise StoreError(
+                f"{path} cannot be used as the database ({type(error).__name__})"
+            ) from None
+        if version not in (0, SCHEMA_VERSION):
+            db.close()
             raise StoreError(
                 f"{path} has schema version {version}, this program needs {SCHEMA_VERSION}"
             )
+        self._db = db
 
     def __enter__(self) -> Self:
         return self
@@ -118,16 +128,25 @@ class Store:
         content_hash = posting.content_hash
         with self._db:
             row = self._db.execute(
-                "SELECT id, content_hash FROM postings"
+                "SELECT id, content_hash, company, url, match_key FROM postings"
                 " WHERE source = ? AND board = ? AND posting_id = ?",
                 (posting.source, posting.board, posting.posting_id),
             ).fetchone()
             if row is None:
                 return self._insert(posting, content_hash, moment)
+            rekeyed = row["match_key"] != posting.match_key
             if row["content_hash"] == content_hash:
                 self._db.execute(
                     "UPDATE postings SET last_seen = ? WHERE id = ?", (moment, row["id"])
                 )
+                # The hash leaves out the company and the URL, so they are compared here.
+                if rekeyed or (row["company"], row["url"]) != (posting.company, posting.url):
+                    self._db.execute(
+                        "UPDATE postings SET company = ?, url = ?, match_key = ? WHERE id = ?",
+                        (posting.company, posting.url, posting.match_key, row["id"]),
+                    )
+                if rekeyed:
+                    self._relink(row["id"], posting)
                 return Outcome.SEEN
             self._db.execute(
                 "UPDATE postings SET company = ?, title = ?, location = ?, remote = ?, url = ?,"
@@ -146,15 +165,46 @@ class Store:
                 ),
             )
             self._add_version(row["id"], content_hash, moment)
+            if rekeyed:
+                self._relink(row["id"], posting)
             return Outcome.CHANGED
 
-    def _insert(self, posting: Posting, content_hash: str, moment: str) -> Outcome:
+    def _original(self, match_key: str, source: str, exclude: int | None = None) -> int | None:
+        """The id of the posting that one with this match key and source duplicates, if any."""
+        # An empty key means the company or the title has no word left, so nothing matches it.
+        if not match_key:
+            return None
+        # Only another source's posting that is not itself a duplicate can be an original.
         match = self._db.execute(
-            "SELECT id, duplicate_of FROM postings WHERE match_key = ? AND source != ?"
-            " ORDER BY id LIMIT 1",
-            (posting.match_key, posting.source),
+            "SELECT id FROM postings WHERE match_key = ? AND source != ?"
+            " AND duplicate_of IS NULL AND id IS NOT ? ORDER BY id LIMIT 1",
+            (match_key, source, exclude),
         ).fetchone()
-        original = None if match is None else (match["duplicate_of"] or match["id"])
+        return None if match is None else int(match["id"])
+
+    def _relink(self, row_id: int, posting: Posting) -> None:
+        """Recompute the links after the match key of a stored posting changed."""
+        self._db.execute(
+            "UPDATE postings SET duplicate_of = ? WHERE id = ?",
+            (self._original(posting.match_key, posting.source, exclude=row_id), row_id),
+        )
+        # Copies that no longer match are looked up again, each after the one before it
+        # was written, so the first can become the original of the next.
+        dependents = self._db.execute(
+            "SELECT id, match_key, source FROM postings"
+            " WHERE duplicate_of = ? AND match_key != ? ORDER BY id",
+            (row_id, posting.match_key),
+        ).fetchall()
+        for dependent in dependents:
+            original = self._original(
+                dependent["match_key"], dependent["source"], exclude=dependent["id"]
+            )
+            self._db.execute(
+                "UPDATE postings SET duplicate_of = ? WHERE id = ?", (original, dependent["id"])
+            )
+
+    def _insert(self, posting: Posting, content_hash: str, moment: str) -> Outcome:
+        original = self._original(posting.match_key, posting.source)
         cursor = self._db.execute(
             "INSERT INTO postings (source, board, posting_id, company, title, location, remote,"
             " url, description, content_hash, match_key, duplicate_of, first_seen, last_seen)"

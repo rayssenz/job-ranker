@@ -188,5 +188,22 @@ def test_unusable_database_gives_a_short_message_without_the_token(tmp_path: Pat
     assert TOKEN not in output
 
 
+def test_database_path_that_is_a_folder_gives_a_short_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = routes()
+    use_routes(monkeypatch, recorder)
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    result = runner.invoke(app, collect_args(tmp_path, "--db", str(folder)))
+    assert result.exit_code == 1
+    # An uncaught error also exits 1, so the kind of exit is checked as well.
+    assert isinstance(result.exception, SystemExit)
+    assert str(folder) in "".join(result.output.split())
+    assert len(result.output.splitlines()) <= 3
+    assert "Traceback" not in result.output
+    assert recorder.requests == []
+
+
 def test_tracebacks_never_show_local_variables() -> None:
     assert app.pretty_exceptions_show_locals is False

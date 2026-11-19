@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from jobranker.models import Posting
-from jobranker.store import Outcome, Store
+from jobranker.store import Outcome, Store, StoreError
 
 T1 = datetime(2026, 11, 19, 8, 0, tzinfo=UTC)
 T2 = datetime(2026, 11, 20, 8, 0, tzinfo=UTC)
@@ -117,6 +117,111 @@ def test_duplicate_seen_again_stays_a_duplicate(store: Store) -> None:
     assert stored is not None and stored.duplicate_of is not None
 
 
+def linkedin_posting(posting_id: str, **changes: str) -> Posting:
+    return make_posting(source="linkedin", board="", posting_id=posting_id, **changes)
+
+
+def link_of(store: Store, posting: Posting) -> int | None:
+    stored = store.get(posting.source, posting.board, posting.posting_id)
+    assert stored is not None
+    return stored.duplicate_of
+
+
+def id_of(store: Store, posting: Posting) -> int:
+    stored = store.get(posting.source, posting.board, posting.posting_id)
+    assert stored is not None
+    return stored.id
+
+
+def test_second_posting_of_a_source_is_not_linked_through_another_source(store: Store) -> None:
+    first, feed, second = linkedin_posting("900"), make_posting(), linkedin_posting("901")
+    assert store.save(first, T1) is Outcome.NEW
+    assert store.save(feed, T1) is Outcome.DUPLICATE
+    assert store.save(second, T1) is Outcome.NEW
+    assert link_of(store, feed) == id_of(store, first)
+    assert link_of(store, second) is None
+
+
+def test_retitled_copy_loses_its_link(store: Store) -> None:
+    store.save(make_posting(), T1)
+    store.save(linkedin_posting("900"), T1)
+    retitled = linkedin_posting("900", title="Data Engineer")
+    assert store.save(retitled, T2) is Outcome.CHANGED
+    assert link_of(store, retitled) is None
+
+
+def test_feed_posting_retitled_to_match_a_stored_original_gains_a_link(store: Store) -> None:
+    original = linkedin_posting("900")
+    store.save(original, T1)
+    assert store.save(make_posting(title="Data Engineer"), T1) is Outcome.NEW
+    assert store.save(make_posting(), T2) is Outcome.CHANGED
+    assert link_of(store, make_posting()) == id_of(store, original)
+
+
+def test_copy_of_a_retitled_original_is_checked_again(store: Store) -> None:
+    store.save(make_posting(), T1)
+    copy = linkedin_posting("900")
+    store.save(copy, T1)
+    assert store.save(make_posting(title="Data Engineer"), T2) is Outcome.CHANGED
+    assert link_of(store, make_posting()) is None
+    assert link_of(store, copy) is None
+
+
+def test_copies_of_a_retitled_original_are_linked_to_each_other(store: Store) -> None:
+    store.save(make_posting(), T1)
+    first, second = linkedin_posting("900"), make_posting(source="lever", posting_id="77")
+    store.save(first, T1)
+    store.save(second, T1)
+    store.save(make_posting(title="Data Engineer"), T2)
+    assert link_of(store, first) is None
+    assert link_of(store, second) == id_of(store, first)
+
+
+def test_copy_that_still_matches_a_retitled_posting_keeps_its_link(store: Store) -> None:
+    store.save(make_posting(), T1)
+    copy = linkedin_posting("900")
+    store.save(copy, T1)
+    assert store.save(make_posting(title="ML engineer!"), T2) is Outcome.CHANGED
+    assert link_of(store, copy) == id_of(store, make_posting())
+
+
+def test_corrected_company_and_url_reach_a_stored_posting(store: Store) -> None:
+    store.save(make_posting(company="Northwind Robots"), T1)
+    corrected = make_posting(url="https://example.test/jobs/new-1001")
+    assert store.save(corrected, T2) is Outcome.SEEN
+    stored = store.get("greenhouse", "northwindrobotics", "1001")
+    assert stored is not None
+    assert stored.posting == corrected
+    assert stored.first_seen == T1
+    assert stored.last_seen == T2
+    assert len(store.versions(stored.id)) == 1
+    # The stored match key follows the company name, so a later copy is recognised.
+    assert store.save(linkedin_posting("900"), T2) is Outcome.DUPLICATE
+
+
+def test_corrected_company_name_rechecks_the_link(store: Store) -> None:
+    original = linkedin_posting("900")
+    store.save(original, T1)
+    assert store.save(make_posting(company="Northwind Robots"), T1) is Outcome.NEW
+    assert store.save(make_posting(), T2) is Outcome.SEEN
+    assert link_of(store, make_posting()) == id_of(store, original)
+
+
+def test_renamed_company_drops_the_link_of_its_copy(store: Store) -> None:
+    store.save(make_posting(), T1)
+    copy = linkedin_posting("900")
+    store.save(copy, T1)
+    assert store.save(make_posting(company="Harborline"), T2) is Outcome.SEEN
+    assert link_of(store, copy) is None
+
+
+def test_punctuation_only_title_is_never_linked(store: Store) -> None:
+    assert store.save(make_posting(title="???"), T1) is Outcome.NEW
+    assert store.save(linkedin_posting("900", title="---"), T1) is Outcome.NEW
+    assert store.save(make_posting(source="lever", posting_id="77", title="!"), T1) is Outcome.NEW
+    assert link_of(store, linkedin_posting("900")) is None
+
+
 def test_reopening_keeps_data(tmp_path: Path) -> None:
     path = tmp_path / "ranker.db"
     with Store(path) as first:
@@ -132,6 +237,29 @@ def test_unknown_schema_version_is_refused(tmp_path: Path) -> None:
     connection.close()
     with pytest.raises(RuntimeError, match="99"):
         Store(path)
+
+
+def assert_refused(path: Path) -> None:
+    with pytest.raises(StoreError) as error:
+        Store(path)
+    assert str(path) in str(error.value)
+    assert error.value.__cause__ is None
+
+
+def test_file_that_is_not_a_database_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    path.write_text("This is a text file, not a database. " * 40)
+    assert_refused(path)
+
+
+def test_directory_as_database_is_refused(tmp_path: Path) -> None:
+    assert_refused(tmp_path)
+
+
+def test_database_under_a_file_is_refused(tmp_path: Path) -> None:
+    blocker = tmp_path / "data"
+    blocker.write_text("not a folder")
+    assert_refused(blocker / "ranker.db")
 
 
 def test_log_run_round_trip(store: Store) -> None:
