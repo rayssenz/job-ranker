@@ -34,15 +34,11 @@ Never
 - The repository is public, so private data is kept out of it.
 - Python 3.12 or newer.
 
-## 4. Approaches considered
+## 4. Approach
 
-A. Command-line program, with the model called from code (chosen). A Python program does everything, and Hermes and Claude Code are thin wrappers around it. The evaluation can run without an agent, so CI can gate on it.
+A Python command-line program does everything, and the model is called from the code. Hermes and Claude Code are thin wrappers around it. The evaluation can run without an agent, so CI can gate on it.
 
-B. Tool server that agents connect to. The agent does the judging, so there is no model call in the code. The ranking then depends on which agent is driving and cannot be measured in CI.
-
-C. Skills and prompts only. This is the fastest to build and leaves little to test or measure.
-
-A is used in a form that needs no API key: the program calls Claude Code's non-interactive mode locally, records the answers, and CI replays the recording.
+No API key is needed. The program calls Claude Code's non-interactive mode locally, records the answers, and CI replays the recording.
 
 ## 5. How it works
 
@@ -137,9 +133,9 @@ Stack: Python 3.12 or newer, uv for environments, ruff, a type checker, pytest, 
 ## 9. Process
 
 - One short spec per milestone in `docs/specs/`: problem, non-goals, acceptance criteria.
-- Decision records in `docs/decisions/`, in MADR format, written when the choice is made.
+- Decision records in `docs/decisions/`, written as ADRs (architecture decision records) when the choice is made.
 - Tests are written first. Each milestone is one pull request with a description.
-- CI runs lint, a type check, the tests, and the evaluation replay with its threshold and staleness check.
+- CI runs lint, a type check and the tests. The evaluation replay, with its threshold and staleness check, joins CI in milestone 5.
 
 ## 10. Milestones
 

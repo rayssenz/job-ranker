@@ -4,7 +4,7 @@ A command-line program that collects new job postings from public company job fe
 
 ## Status
 
-Milestone 0. The repository, the checks and the first decision record are being set up. Nothing ranks yet.
+Milestone 0 is done: the package skeleton, the checks and the first decision records are in place. Nothing ranks yet.
 
 ## Quick start
 
