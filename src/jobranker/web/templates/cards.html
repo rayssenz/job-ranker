@@ -29,6 +29,7 @@
 <div class="cards">
 {% for card in cards %}
 <article class="card{% if card.fresh %} fresh{% endif %}" id="posting-{{ card.id }}">
+  {% if card.fresh %}<span class="eyes" aria-hidden="true"><span class="eye"><i></i></span><span class="eye"><i></i></span></span>{% endif %}
   <h2 class="card-title">{{ card.title }}</h2>
   <p class="meta"><span>{{ card.company }}</span>{% if card.location %}<span>{{ card.location }}</span>{% endif %}<span>{{ card.found }}</span></p>
   {% if card.excerpt %}
@@ -52,7 +53,7 @@
       {% if entry %}<input type="hidden" name="entry" value="1">{% endif %}
       <input type="hidden" name="q" value="{{ query }}">
       <input type="hidden" name="page" value="{{ page }}">
-      <button class="button" type="submit" name="decision" value="applied">Applied</button>
+      <button class="button go" type="submit" name="decision" value="applied">Applied</button>
       <button class="button quiet" type="submit" name="decision" value="dismissed">Not for me</button>
     </form>
     {% else %}
@@ -67,6 +68,7 @@
     <a class="button quiet" href="{{ card.link }}" target="_blank" rel="noopener noreferrer">Open posting</a>
     {% endif %}
   </div>
+  {% if tab == "review" %}<p class="sticker" aria-hidden="true">Applied</p>{% endif %}
 </article>
 {% endfor %}
 </div>

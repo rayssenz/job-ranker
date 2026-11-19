@@ -580,3 +580,80 @@ def test_rules_are_applied_again_only_when_something_was_collected(
     assert titles(client.get("/").text) == ["New Role", "Role 1"]
     client.get("/applied")
     assert len(calls) == 2
+
+
+EYES = (
+    '<span class="eyes" aria-hidden="true"><span class="eye"><i></i></span>'
+    '<span class="eye"><i></i></span></span>'
+)
+STICKER = '<p class="sticker" aria-hidden="true">Applied</p>'
+
+
+def badge(html: str) -> list[tuple[str, str]]:
+    return re.findall(r'<h1><b class="badge">(\d+)</b> ([^<]+)</h1>', html)
+
+
+def test_heading_shows_its_count_in_a_badge(db: Path) -> None:
+    first, second, third = posting(1), posting(2), posting(3)
+    add(db, first, second, third, posting(4))
+    decide(db, second, Decision.APPLIED)
+    decide(db, third, Decision.DISMISSED)
+    assert badge(page(db)) == [("2", "jobs to review")]
+    assert badge(page(db, "/applied")) == [("1", "application")]
+    assert badge(page(db, "/dismissed")) == [("1", "job not for me")]
+    assert "<title>2 jobs to review | Job Ranker</title>" in page(db)
+
+
+def test_runs_heading_has_no_badge(db: Path) -> None:
+    html = page(db, "/runs")
+    assert "<h1>Runs</h1>" in html
+    assert 'class="badge"' not in html
+    assert "<title>Runs | Job Ranker</title>" in html
+
+
+def test_only_a_card_that_is_new_today_has_eyes(db: Path) -> None:
+    add(db, posting(1, title="Old Role"), seen=NOW - timedelta(hours=25))
+    add(db, posting(2, title="New Role"), seen=NOW - timedelta(hours=2))
+    html = page(db)
+    assert html.count(EYES) == 1 and html.count('class="eyes"') == 1
+    fresh, old = html.split('<article class="card"')
+    assert EYES in fresh and "New Role" in fresh
+    assert "Old Role" in old
+
+
+@pytest.mark.parametrize("decision", [Decision.APPLIED, Decision.DISMISSED])
+def test_decided_card_that_is_new_today_keeps_its_eyes(db: Path, decision: Decision) -> None:
+    add(db, posting(1), seen=NOW - timedelta(hours=2))
+    add(db, posting(2), seen=NOW - timedelta(days=3))
+    decide(db, posting(1), decision)
+    decide(db, posting(2), decision)
+    path = "/applied" if decision is Decision.APPLIED else "/dismissed"
+    assert page(db, path).count(EYES) == 1
+
+
+def test_review_cards_carry_the_applied_sticker_and_other_tabs_do_not(db: Path) -> None:
+    first, second, third = posting(1), posting(2), posting(3)
+    add(db, first, second, third, posting(4))
+    decide(db, second, Decision.APPLIED)
+    decide(db, third, Decision.DISMISSED)
+    assert page(db).count(STICKER) == 2
+    for path in ("/applied", "/dismissed", "/runs"):
+        assert 'class="sticker"' not in page(db, path)
+
+
+def test_only_the_applied_button_is_the_accent_button(db: Path) -> None:
+    many(db, 60)
+    html = page(db)
+    marked = re.findall(r'<(?:button|a) class="button go"[^>]*>\s*([^<]*?)\s*</', html)
+    assert marked == ["Applied"] * 50
+    assert '<a class="button" href="/?page=2">Next page</a>' in html
+    decide(db, posting(1), Decision.APPLIED)
+    assert 'class="button go"' not in page(db, "/applied")
+
+
+def test_fixed_decorations_hold_no_text_of_a_posting(db: Path) -> None:
+    add(db, posting(1, **HOSTILE), seen=NOW - timedelta(hours=1))
+    html = page(db)
+    assert html.count(EYES) == 1 and html.count(STICKER) == 1
+    assert titles(html) == [HOSTILE["title"]]
+    assert "<script>alert" not in html and "<img" not in html
