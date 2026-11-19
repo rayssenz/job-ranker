@@ -1,5 +1,6 @@
 """Loading of the company list, the search list and the Apify token."""
 
+import re
 from collections.abc import Hashable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -8,6 +9,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 TOKEN_VARIABLE = "APIFY_TOKEN"
+# In an unquoted value a comment starts at a # that follows white space or starts the value.
+_INLINE_COMMENT = re.compile(r"(?:^|\s)#")
 
 
 class ConfigError(Exception):
@@ -47,9 +50,14 @@ def _entries(path: Path, key: str) -> list[Any]:
         raise ConfigError(f"{path}: not valid YAML ({type(error).__name__})") from error
     if data is None:
         return []
-    if not isinstance(data, dict) or not isinstance(data.get(key, []), list):
+    # Any other top-level key is refused, so a mistyped key is not read as an empty list.
+    if not isinstance(data, dict) or set(data) != {key}:
+        raise ConfigError(f"{path}: expected a top-level '{key}:' list and nothing else")
+    entries = data[key]
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
         raise ConfigError(f"{path}: expected a top-level '{key}:' list")
-    entries: list[Any] = data.get(key, [])
     return entries
 
 
@@ -75,8 +83,9 @@ def load_companies(path: Path) -> list[Company]:
         where = f"{path}: company {index} ({label})"
         if not isinstance(entry, dict):
             raise ConfigError(f"{where}: expected name, feed and token")
-        if "token" in entry and entry["token"] is not None:
-            entry = entry | {"token": str(entry["token"])}
+        # YAML reads an unquoted 0123 as the number 83, so a number is never turned into text.
+        if entry.get("token") is not None and not isinstance(entry["token"], str):
+            raise ConfigError(f'{where}: token must be quoted, for example token: "0123"')
         try:
             company = Company.model_validate(entry)
         except ValidationError as error:
@@ -111,9 +120,20 @@ def read_token(environ: Mapping[str, str], env_file: Path) -> str | None:
         return value
     if not env_file.is_file():
         return None
-    for line in env_file.read_text().splitlines():
+    # utf-8-sig also reads a file that starts with a byte order mark.
+    for line in env_file.read_text(encoding="utf-8-sig").splitlines():
         name, separator, raw = line.strip().removeprefix("export ").partition("=")
         if separator and name.strip() == TOKEN_VARIABLE:
-            value = raw.strip().strip("\"'")
-            return value or None
+            value = _env_value(raw)
+            # An empty line, as copied from .env.example, does not hide a later one.
+            if value:
+                return value
     return None
+
+
+def _env_value(raw: str) -> str:
+    raw = raw.strip()
+    if raw[:1] in ("'", '"'):
+        # A quoted value ends at the closing quote, so a # inside the quotes is kept.
+        return raw[1:].partition(raw[0])[0].strip()
+    return _INLINE_COMMENT.split(raw, maxsplit=1)[0].strip()

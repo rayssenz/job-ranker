@@ -38,11 +38,58 @@ def test_empty_file_gives_empty_list(tmp_path: Path) -> None:
     assert load_companies(write(tmp_path / "c.yaml", "")) == []
 
 
-def test_numeric_token_is_kept_as_text(tmp_path: Path) -> None:
+@pytest.mark.parametrize("token", ["123", "0123"])
+def test_unquoted_numeric_token_is_rejected(tmp_path: Path, token: str) -> None:
     path = write(
-        tmp_path / "c.yaml", "companies:\n  - name: Acme Test\n    feed: lever\n    token: 123\n"
+        tmp_path / "c.yaml",
+        f"companies:\n  - name: Acme Test\n    feed: lever\n    token: {token}\n",
     )
-    assert load_companies(path)[0].token == "123"
+    with pytest.raises(ConfigError) as error:
+        load_companies(path)
+    assert "Acme Test" in str(error.value)
+    assert "quote" in str(error.value)
+
+
+def test_quoted_numeric_token_is_kept_as_written(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        'companies:\n  - name: Acme Test\n    feed: lever\n    token: "0123"\n',
+    )
+    assert load_companies(path)[0].token == "0123"
+
+
+def test_mistyped_top_level_key_is_rejected(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml", "company:\n  - name: Acme Test\n    feed: lever\n    token: acme\n"
+    )
+    with pytest.raises(ConfigError) as error:
+        load_companies(path)
+    assert "c.yaml" in str(error.value)
+    assert "'companies:'" in str(error.value)
+
+
+def test_extra_top_level_key_is_rejected(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n  - name: Acme Test\n    feed: lever\n    token: acme\nsearches: []\n",
+    )
+    with pytest.raises(ConfigError) as error:
+        load_companies(path)
+    assert "c.yaml" in str(error.value)
+    assert "'companies:'" in str(error.value)
+
+
+def test_mistyped_top_level_key_is_rejected_for_searches(tmp_path: Path) -> None:
+    path = write(tmp_path / "s.yaml", "search:\n  - keywords: x\n    location: Lisbon\n")
+    with pytest.raises(ConfigError) as error:
+        load_searches(path)
+    assert "'searches:'" in str(error.value)
+
+
+def test_expected_key_without_entries_gives_empty_list(tmp_path: Path) -> None:
+    assert load_companies(write(tmp_path / "c.yaml", "companies:\n")) == []
+    assert load_searches(write(tmp_path / "s.yaml", "searches:\n")) == []
+    assert load_companies(write(tmp_path / "e.yaml", "companies: []\n")) == []
 
 
 def test_unknown_feed_is_rejected_and_names_the_entry(tmp_path: Path) -> None:
@@ -115,6 +162,36 @@ def test_token_from_environment_wins_over_file(tmp_path: Path) -> None:
 def test_token_from_env_file(tmp_path: Path) -> None:
     env_file = write(tmp_path / ".env", '# comment\nOTHER=1\nAPIFY_TOKEN="from-file"\n')
     assert read_token({}, env_file) == "from-file"
+
+
+def test_empty_token_line_does_not_hide_a_later_one(tmp_path: Path) -> None:
+    env_file = write(tmp_path / ".env", "APIFY_TOKEN=\nAPIFY_TOKEN=abc123\n")
+    assert read_token({}, env_file) == "abc123"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("APIFY_TOKEN=abc123 # note", "abc123"),
+        ("APIFY_TOKEN=abc123\t# note", "abc123"),
+        ('APIFY_TOKEN="abc123" # note', "abc123"),
+        ("export APIFY_TOKEN='abc123' # note", "abc123"),
+        ('APIFY_TOKEN="abc #123"', "abc #123"),
+        ("APIFY_TOKEN=abc#123", "abc#123"),
+    ],
+)
+def test_inline_comment_is_not_part_of_the_token(tmp_path: Path, line: str, expected: str) -> None:
+    assert read_token({}, write(tmp_path / ".env", line + "\n")) == expected
+
+
+def test_token_line_with_only_a_comment_is_absent(tmp_path: Path) -> None:
+    assert read_token({}, write(tmp_path / ".env", "APIFY_TOKEN= # put it here\n")) is None
+
+
+def test_env_file_with_byte_order_mark_is_read(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(b"\xef\xbb\xbfAPIFY_TOKEN=abc123\n")
+    assert read_token({}, env_file) == "abc123"
 
 
 def test_empty_token_is_absent(tmp_path: Path) -> None:

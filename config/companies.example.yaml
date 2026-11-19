@@ -3,7 +3,8 @@
 #
 # name:   written as the company writes it. Duplicates are matched on it.
 # feed:   greenhouse, lever or ashby
-# token:  the board name in the company's job page address
+# token:  the board name in the company's job page address.
+#         A token made only of digits must be quoted, for example "0123".
 # region: lever only, global (default) or eu
 companies:
   - name: Northwind Robotics
