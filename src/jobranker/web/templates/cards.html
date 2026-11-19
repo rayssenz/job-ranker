@@ -44,7 +44,25 @@
     {% if card.stamp %}
     <p class="stamp">{{ card.stamp }}</p>
     {% endif %}
-    {% block decisions scoped %}{% endblock %}
+    {% if tab == "review" %}
+    <form class="decision" method="post" action="/decide">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="posting" value="{{ card.id }}">
+      <input type="hidden" name="tab" value="review">
+      {% if entry %}<input type="hidden" name="entry" value="1">{% endif %}
+      <input type="hidden" name="q" value="{{ query }}">
+      <input type="hidden" name="page" value="{{ page }}">
+      <button class="button" type="submit" name="decision" value="applied">Applied</button>
+      <button class="button quiet" type="submit" name="decision" value="dismissed">Not for me</button>
+    </form>
+    {% else %}
+    <form class="decision" method="post" action="/undo">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="posting" value="{{ card.id }}">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <button class="button quiet" type="submit">Undo</button>
+    </form>
+    {% endif %}
     {% if card.link %}
     <a class="button quiet" href="{{ card.link }}" target="_blank" rel="noopener noreferrer">Open posting</a>
     {% endif %}
