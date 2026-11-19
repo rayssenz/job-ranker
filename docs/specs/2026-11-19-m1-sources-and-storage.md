@@ -27,7 +27,7 @@ The addresses below were checked against each provider's documentation and with 
 
 Notes:
 
-- Greenhouse returns the description only with `content=true`, as HTML with its characters escaped. The adapter unescapes it and removes the tags.
+- Greenhouse returns the description only with `content=true`, as HTML with its characters escaped. The adapter unescapes the content once before the tags are removed, so text such as `List&lt;String&gt;` inside the HTML stays text.
 - Lever's `descriptionPlain` leaves out the requirement lists and the closing text. The adapter joins all three parts.
 - Lever's documentation gives `skip` and `limit` and no maximum page size. The adapter asks for pages of 100 until a page comes back with fewer. It stops with an error after 50 pages, so a feed that ignores `skip` cannot be read forever.
 - Ashby's `id` is present in the live response and in no documented field table. When it is missing, the adapter uses `jobUrl` as the ID. Ashby postings with `isListed` false are skipped.
@@ -88,11 +88,14 @@ Source, board token, posting ID (stored as text), company name, title, location,
 
 - A posting is identified by source, board token and posting ID. LinkedIn postings have no board token, and the actor name is not part of the identity, so changing the actor does not make stored postings look new.
 - The content hash is SHA-256 over the title, location, remote flag and description.
-- The match key is the company name and the title, each in lower case with punctuation removed, and the company name without a legal-form ending such as GmbH, AG, SE, Inc, Ltd or LLC.
+- The match key is the company name and the title, each in lower case with punctuation removed, and the company name without a legal-form ending such as GmbH, AG, SE, Inc, Ltd or LLC. A `+`, a `#` and a `.` that starts a word are kept as the words `plus`, `sharp` and `dot`, so `C++`, `C#`, `C` and `.NET` give different keys. When the company name or the title has no word left, the match key is empty.
+- The company name and the URL are not part of the content hash. When a posting is seen again with the same hash and a different company name or URL, the stored values and the match key are updated, and the posting is not counted as changed.
 
 ### Duplicates
 
-When a new posting has the same match key as a stored posting from a different source, the store saves it with a link to that earlier posting and counts it as a duplicate instead of a new posting. The command collects company feeds before the search source, so within one run the feed copy is the original. Two postings from the same source are never linked, because a company can publish the same title for two places. A link always points to a posting that is not itself a duplicate.
+When a new posting has the same match key as a stored posting from a different source that is not itself a duplicate, the store saves it with a link to that earlier posting and counts it as a duplicate instead of a new posting. When several stored postings qualify, the earliest one is used. The command collects company feeds before the search source, so within one run the feed copy is the original. Two postings from the same source are never linked, because a company can publish the same title for two places. A link always points to a posting from another source that is not itself a duplicate. An empty match key is never matched.
+
+The link is rechecked when a stored posting's company name or title changes, because that changes its match key. The posting's own link is looked up again with the same rule, and so is the link of every posting that pointed to it and no longer has the same match key. A link can be added or removed this way. The posting is still counted as changed or as seen, not as a duplicate.
 
 The rule ignores the location, because the sources write it differently. A company that offers the same title in two places can therefore have its LinkedIn posting for one place linked to the feed posting for the other.
 
