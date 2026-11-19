@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block main %}
+{% if not runs %}
+<p class="empty">No runs yet. Run `jobrank collect` in the terminal, then reload this page.</p>
+{% else %}
+<section class="sheet">
+  <h2>Latest run</h2>
+  {% if failures %}
+  <p>These sources were not collected:</p>
+  <ul class="failures">
+    {% for source, target, error in failures %}
+    <li><strong>{{ target }}</strong> <span class="where">{{ source }}</span> <span class="failed">{{ error }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>Every source was collected.</p>
+  {% endif %}
+</section>
+<section class="sheet">
+  <h2>Last {{ runs | length }} {{ "run" if runs | length == 1 else "runs" }}</h2>
+  <table class="runs">
+    <thead>
+      <tr><th scope="col">Started</th><th scope="col">Sources</th><th scope="col">Not collected</th><th scope="col">New jobs</th></tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr><td>{{ run.started }}</td><td>{{ run.sources }}</td><td{% if run.not_collected %} class="failed"{% endif %}>{{ run.not_collected }}</td><td>{{ run.new }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

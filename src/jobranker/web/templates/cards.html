@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block lead %}
+{% if filters and filtered %}<p class="sub">Showing {{ kept }} of {{ total }}</p>{% endif %}
+{% endblock %}
+{% block main %}
+{% if filters %}
+{% if run %}
+<p class="health">
+  Last run on {{ run.started }}: {{ run.sources }} {{ "source" if run.sources == 1 else "sources" }},
+  {% if run.not_collected %}<a class="failed" href="/runs">{{ run.not_collected }} not collected</a>{% else %}all collected{% endif %},
+  {{ run.new }} new.
+</p>
+{% endif %}
+<form class="filters" method="get" action="/">
+  <label class="switch">
+    <input type="checkbox" name="entry" value="1"{% if entry %} checked{% endif %}>
+    <span>Student and junior only</span>
+  </label>
+  <label class="search">
+    <span class="hidden">Search title, company or place</span>
+    <input type="search" name="q" value="{{ query }}" maxlength="100" placeholder="Search title, company or place">
+  </label>
+  <button class="button quiet" type="submit">Show</button>
+</form>
+{% endif %}
+{% if empty %}
+<p class="empty">{{ empty }}{% if filters and filtered %} <a href="/">Show all jobs</a>{% endif %}</p>
+{% endif %}
+<div class="cards">
+{% for card in cards %}
+<article class="card{% if card.fresh %} fresh{% endif %}" id="posting-{{ card.id }}">
+  <h2 class="card-title">{{ card.title }}</h2>
+  <p class="meta"><span>{{ card.company }}</span>{% if card.location %}<span>{{ card.location }}</span>{% endif %}<span>{{ card.found }}</span></p>
+  {% if card.excerpt %}
+  <p class="excerpt">{{ card.excerpt }}{% if card.cut %} …{% endif %}</p>
+  {% endif %}
+  {% if card.cut %}
+  <details class="full">
+    <summary>Show full text</summary>
+    <div class="full-text">{{ card.description }}</div>
+  </details>
+  {% endif %}
+  <div class="acts">
+    {% if card.stamp %}
+    <p class="stamp">{{ card.stamp }}</p>
+    {% endif %}
+    {% block decisions scoped %}{% endblock %}
+    {% if card.link %}
+    <a class="button quiet" href="{{ card.link }}" target="_blank" rel="noopener noreferrer">Open posting</a>
+    {% endif %}
+  </div>
+</article>
+{% endfor %}
+</div>
+{% if filters and pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if previous %}<a class="button quiet" href="{{ previous }}">Previous page</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if next %}<a class="button" href="{{ next }}">Next page</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

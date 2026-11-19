@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{ heading }} | Job Ranker</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/dashboard.css">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  <div class="lead">
+    <h1>{{ heading }}</h1>
+    {% block lead %}{% endblock %}
+  </div>
+  <nav class="tabs" aria-label="Lists">
+    {% for tab in tabs -%}
+    <a class="tab" href="{{ tab.path }}"{% if tab.path == active %} aria-current="page"{% endif %}>{{ tab.label }} <span class="count">{{ tab.count }}</span></a>
+    {% endfor %}
+  </nav>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>
