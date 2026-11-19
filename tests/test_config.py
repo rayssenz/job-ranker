@@ -282,3 +282,10 @@ def test_search_limit_must_be_a_number(tmp_path: Path) -> None:
 )
 def test_escapes_in_a_quoted_token(tmp_path: Path, line: str, expected: str) -> None:
     assert read_token({}, write(tmp_path / ".env", line + "\n")) == expected
+
+
+def test_impossible_date_in_a_config_file_is_rejected(tmp_path: Path) -> None:
+    path = write(tmp_path / "c.yaml", "companies:\n  - name: 2026-02-30\n")
+    with pytest.raises(ConfigError) as error:
+        load_companies(path)
+    assert "c.yaml" in str(error.value)

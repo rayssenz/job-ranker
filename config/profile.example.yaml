@@ -19,7 +19,7 @@ levels:
 languages: [English, Portuguese]
 avoid: [gambling]
 title_words: [engineer, developer, data, machine learning]
-# Read from milestone 3 on.
+# Read by the judge from milestone 4 on.
 roles: [machine learning engineer]
 skills: [Python, SQL]
 notes: ""

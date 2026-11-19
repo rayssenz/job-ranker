@@ -246,6 +246,15 @@ def assert_refused(path: Path) -> None:
     assert error.value.__cause__ is None
 
 
+@pytest.mark.parametrize("version", [-1, 3, 99])
+def test_version_without_an_upgrade_step_is_refused(tmp_path: Path, version: int) -> None:
+    path = tmp_path / "ranker.db"
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA user_version = {version}")
+    connection.close()
+    assert_refused(path)
+
+
 def test_file_that_is_not_a_database_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "ranker.db"
     path.write_text("This is a text file, not a database. " * 40)

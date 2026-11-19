@@ -441,3 +441,52 @@ def test_missing_or_wrong_profile_stops_with_a_short_message(
     assert result.exit_code == 1
     assert "places" in result.output
     assert "secret" not in result.output and "Traceback" not in result.output
+
+
+def test_list_refuses_a_number_of_days_that_is_too_large(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["list", "--db", str(database), "--profile", str(profile), "--days", "900000"]
+    )
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("command", ["rules", "list"])
+def test_missing_database_is_refused_and_not_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    _, profile = rules_setup(tmp_path, monkeypatch)
+    missing = tmp_path / "typo" / "ranker.db"
+    result = runner.invoke(app, [command, "--db", str(missing), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "jobrank collect" in result.output
+    assert not missing.parent.exists()
+
+
+def test_list_tells_an_empty_store_from_rules_that_were_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, profile = rules_setup(tmp_path, monkeypatch)
+    empty = tmp_path / "empty.db"
+    Store(empty).close()
+    assert run_command("rules", empty, profile)[0] == "checked 0"
+    assert run_command("list", empty, profile) == [
+        "No postings are stored. Run `jobrank collect` first."
+    ]
+
+
+def test_list_says_so_when_nothing_passed_or_nothing_is_recent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    run_command("rules", database, profile)
+    monkeypatch.setattr(cli, "utc_now", lambda: datetime(2027, 6, 1, tzinfo=UTC))
+    assert run_command("list", database, profile, "--days", "3") == [
+        "No posting that passed the rules was first seen in the last 3 days."
+    ]
+    profile.write_text("places: [Nowhere]\n")
+    run_command("rules", database, profile)
+    assert run_command("list", database, profile) == ["No posting passed the rules."]

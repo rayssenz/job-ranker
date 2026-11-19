@@ -112,7 +112,7 @@ class Store:
             db.execute("PRAGMA foreign_keys = ON")
             version = db.execute("PRAGMA user_version").fetchone()[0]
             foreign = version == 0 and db.execute("SELECT 1 FROM sqlite_master").fetchone()
-            if not foreign and version < SCHEMA_VERSION:
+            if not foreign and 0 <= version < SCHEMA_VERSION:
                 steps = "".join(_STEPS[step] for step in range(version + 1, SCHEMA_VERSION + 1))
                 # One transaction, so a new file or an upgrade that is stopped or fails here
                 # stays as it was. The stored rows are not touched by any step.
@@ -128,7 +128,8 @@ class Store:
             db.close()
             # Tables without a schema version belong to something else and are left alone.
             raise StoreError(f"{path} holds other data and is not a database of this program")
-        if version > SCHEMA_VERSION:
+        # No step leads from a version below zero or above the one this program knows.
+        if not 0 <= version <= SCHEMA_VERSION:
             db.close()
             raise StoreError(
                 f"{path} has schema version {version}, this program needs {SCHEMA_VERSION}"

@@ -132,12 +132,20 @@ def collect_command(
 ProfileOption = Annotated[Path, typer.Option(help="Private profile. Not committed.")]
 DatabaseOption = Annotated[Path, typer.Option(help="SQLite file the postings are stored in.")]
 NO_RESULTS = "No rule results for this profile. Run `jobrank rules` first."
+NO_POSTINGS = "No postings are stored. Run `jobrank collect` first."
+NOTHING_PASSED = "No posting passed the rules."
+# About a hundred years. A larger number cannot be subtracted from a date.
+MAX_DAYS = 36500
 
 
 def _open(profile: Path, db: Path) -> tuple[Profile, Store]:
     """Load the profile and open the store, or stop with a short message."""
     try:
-        return load_profile(profile), Store(db)
+        loaded = load_profile(profile)
+        # Opening a missing file would create it, which hides a mistyped path.
+        if not db.is_file():
+            raise StoreError(f"{db}: not found. Run `jobrank collect` first.")
+        return loaded, Store(db)
     except (ProfileError, StoreError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
@@ -166,7 +174,8 @@ def list_command(
     profile: ProfileOption = Path("profile.yaml"),
     db: DatabaseOption = Path("data/ranker.db"),
     days: Annotated[
-        int | None, typer.Option(min=1, help="Only postings first seen in the last N days.")
+        int | None,
+        typer.Option(min=1, max=MAX_DAYS, help="Only postings first seen in the last N days."),
     ] = None,
     limit: Annotated[int, typer.Option(min=1, help="Most postings to print.")] = 50,
 ) -> None:
@@ -174,11 +183,17 @@ def list_command(
     loaded, store = _open(profile, db)
     since = None if days is None else utc_now() - timedelta(days=days)
     with store:
-        checked = store.rule_counts(loaded.digest, RULES_VERSION)["checked"]
+        stored_count = store.count()
+        counts = store.rule_counts(loaded.digest, RULES_VERSION)
         groups = store.passed_groups(loaded.digest, RULES_VERSION, since=since, limit=limit)
-    if not checked:
+    if not stored_count:
+        typer.echo(NO_POSTINGS)
+    elif not counts["checked"]:
         typer.echo(NO_RESULTS)
-        return
+    elif not counts["groups"]:
+        typer.echo(NOTHING_PASSED)
+    elif not groups:
+        typer.echo(f"No posting that passed the rules was first seen in the last {days} days.")
     for stored in groups:
         posting = stored.posting
         typer.echo(f"{posting.company} | {posting.title} | {posting.location}")

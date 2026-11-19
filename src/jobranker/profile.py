@@ -41,7 +41,7 @@ class Profile(BaseModel):
     languages: list[Text] = Field(default_factory=list)
     avoid: list[Text] = Field(default_factory=list)
     title_words: list[Text] = Field(default_factory=list)
-    # Read by the judge from milestone 3 on.
+    # Read by the judge from milestone 4 on.
     roles: list[Text] = Field(default_factory=list)
     skills: list[Text] = Field(default_factory=list)
     notes: str = ""
@@ -61,7 +61,8 @@ def load_profile(path: Path) -> Profile:
         data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError) as error:
         raise ProfileError(f"{path}: cannot be read ({type(error).__name__})") from None
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, ValueError) as error:
+        # The loader raises a plain ValueError for a value such as an impossible date.
         raise ProfileError(f"{path}: not valid YAML ({type(error).__name__})") from None
     if not isinstance(data, dict):
         raise ProfileError(f"{path}: expected fields such as 'places:', as in {EXAMPLE}")

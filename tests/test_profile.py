@@ -81,3 +81,11 @@ def test_digest_follows_the_rule_fields_only() -> None:
     assert base.digest == same_rules.digest
     assert base.digest != other_rules.digest
     assert len(base.digest) == 64
+
+
+def test_impossible_date_in_the_profile_is_rejected_without_its_digits(tmp_path: Path) -> None:
+    path = write(tmp_path / "profile.yaml", "places: [2026-02-30]\n")
+    with pytest.raises(ProfileError) as error:
+        load_profile(path)
+    assert "profile.yaml" in str(error.value)
+    assert "2026" not in str(error.value)
