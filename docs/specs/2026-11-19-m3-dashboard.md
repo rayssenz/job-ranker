@@ -46,6 +46,8 @@ An empty tab says what to do next: collect postings, or that everything is revie
 
 ## Look
 
+Replaced on 2026-11-20 by the toy box look, see `2026-11-20-dashboard-toy-box-look.md`. The paragraph below describes the first look.
+
 One column of cards on a cool white page. Ink blue for headings, links and the primary button. Red only for the applied stamp and for a failed source. Two typefaces, Bricolage Grotesque for headings and Instrument Sans for text, stored in the package so the page needs no network. The layout works on a narrow window. Keyboard focus is visible and the buttons work without JavaScript.
 
 ## Commands

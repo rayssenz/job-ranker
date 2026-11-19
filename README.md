@@ -61,6 +61,8 @@ The command applies the rules, starts a small web application on `http://127.0.0
 - **Applied** and **Not for me** show what was decided, each with "Undo".
 - **Runs** shows the last ten collection runs and the sources that the latest one did not collect.
 
+The page has a playful look with motion: cards pop in, a card that is new today has eyes that follow the pointer, and "Applied" slaps a sticker on the card. With reduced motion set in the system, nothing moves.
+
 `--port` picks another port (1024 or higher) and `--no-open` leaves the browser alone.
 
 The application answers on this machine only, sends no request, and loads no file from another machine. A posting is text from a third party, so it is always shown as text. Changing a decision needs a token that is made new at each start.
@@ -71,6 +73,7 @@ The application answers on this machine only, sends no request, and loads no fil
 - [Milestone 1: sources and storage](docs/specs/2026-11-19-m1-sources-and-storage.md)
 - [Milestone 2: rules](docs/specs/2026-11-19-m2-rules.md)
 - [Milestone 3: local dashboard](docs/specs/2026-11-19-m3-dashboard.md)
+- [Dashboard: the toy box look](docs/specs/2026-11-20-dashboard-toy-box-look.md)
 - Decision records live in `docs/decisions/`.
 
 ## How this was built
