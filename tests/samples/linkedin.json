@@ -1,0 +1,47 @@
+[
+  {
+    "id": "9000000001",
+    "url": "https://www.linkedin.example.test/jobs/view/ml-engineer-at-northwind-robotics-9000000001",
+    "title": "ML Engineer",
+    "location": "Lisbon, Portugal",
+    "companyName": "NORTHWIND ROBOTICS GmbH",
+    "companyUrl": "https://www.linkedin.example.test/company/northwind-robotics",
+    "recruiterName": "Made-Up Recruiter One",
+    "recruiterUrl": "https://www.linkedin.example.test/in/made-up-recruiter-one",
+    "experienceLevel": "Mid-Senior level",
+    "contractType": "Full-time",
+    "workType": "Engineering",
+    "sector": "Robotics",
+    "salary": "",
+    "applyType": "EXTERNAL",
+    "postedTimeAgo": "1 day ago",
+    "postedDate": "2026-11-18",
+    "applicationsCount": "12 applicants",
+    "description": "Build and run perception models. Python and PyTorch.",
+    "descriptionHtml": "<p>Build and run perception models. Python and PyTorch.</p>"
+  },
+  {
+    "id": "9000000002",
+    "url": "https://www.linkedin.example.test/jobs/view/research-engineer-at-quillmark-9000000002",
+    "title": "Research Engineer",
+    "location": "Lisbon, Portugal",
+    "companyName": "Quillmark",
+    "recruiterName": "Made-Up Recruiter Two",
+    "recruiterUrl": "https://www.linkedin.example.test/in/made-up-recruiter-two",
+    "postedDate": "2026-11-18",
+    "description": "Evaluate language models.",
+    "descriptionHtml": "<p>Evaluate language models.</p>"
+  },
+  {
+    "id": "9000000003",
+    "url": "https://www.linkedin.example.test/jobs/view/mlops-engineer-at-harborline-9000000003",
+    "title": "MLOps Engineer",
+    "location": "Porto, Portugal",
+    "companyName": "Harborline",
+    "recruiterName": "Made-Up Recruiter Three",
+    "recruiterUrl": "https://www.linkedin.example.test/in/made-up-recruiter-three",
+    "postedDate": "2026-11-18",
+    "description": "Operate training and serving clusters.",
+    "descriptionHtml": "<p>Operate training and serving clusters.</p>"
+  }
+]
