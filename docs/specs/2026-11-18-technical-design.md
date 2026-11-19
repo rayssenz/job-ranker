@@ -80,9 +80,9 @@ The rules are pure functions over a posting and the profile. They check for a pl
 
 ### Dashboard
 
-`jobrank dashboard` applies the rules, starts a web application on `127.0.0.1` and opens it in the browser. The milestone 3 spec and decision record 0009 have the details.
+`jobrank dashboard` applies the rules, starts a web application on `127.0.0.1` and opens it in the browser. Postings collected while it runs get their rule results at the next page request. The milestone 3 spec and decision record 0009 have the details.
 
-Four tabs, each with its count. "To review" shows the groups of linked postings that passed the rules and have no decision, newest first, fifty per page, with a switch for student and junior titles and a search over title, company and location. "Applied" and "Not for me" show the decided groups. "Runs" shows the last ten runs and the sources that the latest run did not collect.
+Four tabs, the first three with their count. "To review" shows the groups of linked postings that passed the rules and have no decision, newest first, fifty per page, with a switch for student and junior titles and a search over title, company and location. "Applied" and "Not for me" show the decided groups. "Runs" shows the last ten runs and the sources that the latest run did not collect.
 
 A card has two decisions, "Applied" and "Not for me", and the decided tabs have "Undo". A decision is stored with the posting that was shown and counts for its whole group. A decided group stays in its tab when it no longer passes the rules, so a change of the profile removes no application from the list.
 

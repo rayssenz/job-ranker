@@ -55,13 +55,13 @@ Neither command sends a request.
 uv run jobrank dashboard
 ```
 
-The command applies the rules, starts a small web application on `http://127.0.0.1:8765` and opens it in the browser. Ctrl+C stops it.
+The command applies the rules, starts a small web application on `http://127.0.0.1:8765` and opens it in the browser. Ctrl+C stops it. Postings collected while it runs show up after a reload.
 
 - **To review** shows the postings that passed the rules as cards, newest first. "Applied" and "Not for me" move a posting to its own tab, so the list gets shorter. A switch keeps student and junior titles only, and a search field looks in title, company and place.
 - **Applied** and **Not for me** show what was decided, each with "Undo".
 - **Runs** shows the last ten collection runs and the sources that the latest one did not collect.
 
-`--port` picks another port and `--no-open` leaves the browser alone.
+`--port` picks another port (1024 or higher) and `--no-open` leaves the browser alone.
 
 The application answers on this machine only, sends no request, and loads no file from another machine. A posting is text from a third party, so it is always shown as text. Changing a decision needs a token that is made new at each start.
 

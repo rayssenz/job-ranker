@@ -17,7 +17,7 @@ Nothing is hosted. The application answers only on the local machine and makes n
 
 ## What the person sees
 
-Four tabs, each with its count:
+Four tabs. The first three show their count. The runs tab shows only the last runs, so it has none:
 
 | Tab | Shows |
 |---|---|
@@ -50,13 +50,13 @@ One column of cards on a cool white page. Ink blue for headings, links and the p
 
 ## Commands
 
-`jobrank dashboard` loads the profile, applies the rules to every posting without a current result, starts the application and opens the browser. It stops with Ctrl+C.
+`jobrank dashboard` loads the profile, applies the rules to every posting without a current result, starts the application and opens the browser. It stops with Ctrl+C. Postings that are collected while it runs get their rule results at the next page request, so a reload shows them.
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--profile` | `profile.yaml` | the private profile |
 | `--db` | `data/ranker.db` | the database |
-| `--port` | `8765` | the local port |
+| `--port` | `8765` | the local port, 1024 or higher |
 | `--no-open` | off | do not open the browser |
 
 A missing profile or database stops the command with a short message, as in milestone 2. A port that is in use stops it with a message that names `--port`.
