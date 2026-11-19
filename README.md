@@ -27,6 +27,8 @@ Edit the two copied files first. The example entries are made up and their feeds
 - `config/companies.yaml` lists companies with their feed type and board name. These feeds are public and need no key.
 - `config/searches.yaml` lists LinkedIn searches by words and place. They run through an [Apify](https://apify.com) actor and need an Apify token in `.env` as `APIFY_TOKEN`. Without a token the searches are skipped.
 
+In a terminal the command shows each source as it finishes, a bar with the number of sources done, and the source it is collecting now. `--quiet` prints plain lines only, which is also what a file or a scheduled job gets.
+
 Apify bills each search result. A run asks for at most 200 results in total (`--max-results`), and every request carries a cost cap.
 
 The command prints one line per company and per search: how many postings it fetched and how many of them are new, changed or duplicates. Postings are stored in `data/ranker.db`. The two configuration files, `.env` and `data/` are ignored by git.
