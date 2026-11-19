@@ -4,6 +4,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from typer.testing import CliRunner
 
 from jobranker import cli
 from jobranker.cli import app
+from jobranker.models import Posting
+from jobranker.store import Store
 
 runner = CliRunner()
 
@@ -305,3 +308,185 @@ def test_each_line_is_written_before_the_next_source_starts(
     with pytest.raises(SystemExit):
         app(collect_args(tmp_path))
     assert seen_at_request == [0, 1, 1]
+
+
+PROFILE_TEXT = """
+places: [Lisbon]
+levels:
+  accept: [junior]
+  reject: [senior]
+title_words: [engineer]
+"""
+
+
+def rules_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """A store with four made-up postings and a profile. Any request fails the test."""
+
+    def no_requests() -> httpx.Client:
+        raise AssertionError("this command must not send a request")
+
+    monkeypatch.setattr(cli, "make_client", no_requests)
+    database, profile = tmp_path / "ranker.db", tmp_path / "profile.yaml"
+    profile.write_text(PROFILE_TEXT)
+    rows = [
+        ("1", "Junior Data Engineer", "Lisbon", datetime(2026, 11, 10, tzinfo=UTC)),
+        ("2", "Senior Data Engineer", "Lisbon", datetime(2026, 11, 11, tzinfo=UTC)),
+        ("3", "Barista", "Madrid", datetime(2026, 11, 12, tzinfo=UTC)),
+        ("4", "Platform Engineer", "Lisbon Office", datetime(2026, 11, 13, tzinfo=UTC)),
+    ]
+    with Store(database) as store:
+        for posting_id, title, location, seen in rows:
+            posting = Posting(
+                source="greenhouse",
+                board="northwindrobotics",
+                posting_id=posting_id,
+                company="Northwind Robotics",
+                title=title,
+                location=location,
+                url=f"https://example.test/jobs/{posting_id}",
+            )
+            store.save(posting, seen)
+        copy = Posting(
+            source="linkedin",
+            board="",
+            posting_id="900",
+            company="Northwind Robotics",
+            title="Platform Engineer",
+            location="Lisbon, Portugal",
+            url="https://example.test/copy/900",
+        )
+        store.save(copy, datetime(2026, 11, 14, tzinfo=UTC))
+    return database, profile
+
+
+def run_command(name: str, database: Path, profile: Path, *extra: str) -> list[str]:
+    result = runner.invoke(app, [name, "--db", str(database), "--profile", str(profile), *extra])
+    assert result.exit_code == 0, result.output
+    return result.output.splitlines()
+
+
+def test_rules_prints_counts_and_checks_nothing_the_second_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    assert run_command("rules", database, profile) == [
+        "checked 5",
+        "place: 1",
+        "level: 1",
+        "language: 0",
+        "avoid: 0",
+        "title: 1",
+        "passed 3 postings in 2 groups",
+    ]
+    assert run_command("rules", database, profile)[0] == "checked 0"
+    assert run_command("rules", database, profile)[-1] == "passed 3 postings in 2 groups"
+
+
+def test_rules_checks_everything_again_after_a_profile_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    run_command("rules", database, profile)
+    profile.write_text(PROFILE_TEXT.replace("title_words: [engineer]", "title_words: []"))
+    lines = run_command("rules", database, profile)
+    assert lines[0] == "checked 5"
+    assert "title: 0" in lines
+
+
+def test_list_prints_passed_groups_newest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    run_command("rules", database, profile)
+    assert run_command("list", database, profile) == [
+        "Northwind Robotics | Platform Engineer | Lisbon Office",
+        "  https://example.test/jobs/4",
+        "Northwind Robotics | Junior Data Engineer | Lisbon",
+        "  https://example.test/jobs/1",
+    ]
+    assert run_command("list", database, profile, "--limit", "1") == [
+        "Northwind Robotics | Platform Engineer | Lisbon Office",
+        "  https://example.test/jobs/4",
+    ]
+
+
+def test_list_can_be_limited_to_recent_days(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    run_command("rules", database, profile)
+    monkeypatch.setattr(cli, "utc_now", lambda: datetime(2026, 11, 14, 12, tzinfo=UTC))
+    assert len(run_command("list", database, profile, "--days", "2")) == 2
+    assert len(run_command("list", database, profile, "--days", "30")) == 4
+
+
+def test_list_before_rules_gives_a_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    assert run_command("list", database, profile) == [
+        "No rule results for this profile. Run `jobrank rules` first."
+    ]
+
+
+@pytest.mark.parametrize("command", ["rules", "list"])
+def test_missing_or_wrong_profile_stops_with_a_short_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    profile.unlink()
+    result = runner.invoke(app, [command, "--db", str(database), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "config/profile.example.yaml" in result.output
+    profile.write_text("places: Lisbon-secret\n")
+    result = runner.invoke(app, [command, "--db", str(database), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "places" in result.output
+    assert "secret" not in result.output and "Traceback" not in result.output
+
+
+def test_list_refuses_a_number_of_days_that_is_too_large(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["list", "--db", str(database), "--profile", str(profile), "--days", "900000"]
+    )
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("command", ["rules", "list"])
+def test_missing_database_is_refused_and_not_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    _, profile = rules_setup(tmp_path, monkeypatch)
+    missing = tmp_path / "typo" / "ranker.db"
+    result = runner.invoke(app, [command, "--db", str(missing), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "jobrank collect" in result.output
+    assert not missing.parent.exists()
+
+
+def test_list_tells_an_empty_store_from_rules_that_were_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, profile = rules_setup(tmp_path, monkeypatch)
+    empty = tmp_path / "empty.db"
+    Store(empty).close()
+    assert run_command("rules", empty, profile)[0] == "checked 0"
+    assert run_command("list", empty, profile) == [
+        "No postings are stored. Run `jobrank collect` first."
+    ]
+
+
+def test_list_says_so_when_nothing_passed_or_nothing_is_recent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    run_command("rules", database, profile)
+    monkeypatch.setattr(cli, "utc_now", lambda: datetime(2027, 6, 1, tzinfo=UTC))
+    assert run_command("list", database, profile, "--days", "3") == [
+        "No posting that passed the rules was first seen in the last 3 days."
+    ]
+    profile.write_text("places: [Nowhere]\n")
+    run_command("rules", database, profile)
+    assert run_command("list", database, profile) == ["No posting passed the rules."]

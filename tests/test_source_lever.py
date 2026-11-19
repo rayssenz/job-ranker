@@ -103,3 +103,20 @@ def test_wrong_shape_raises(body: object) -> None:
     with pytest.raises(SourceError) as error:
         lever.fetch(Recorder(answer(body)).client, LEVER)
     assert error.value.reason == "unexpected shape"
+
+
+@pytest.mark.parametrize(
+    ("every", "expected"),
+    [
+        (["Oslo", "Lisbon"], "Oslo; Lisbon"),
+        (["Lisbon", " Oslo ", "Lisbon"], "Oslo; Lisbon"),
+        (["", None, 7, {"name": "Porto"}], "Oslo; 7"),
+        ("Lisbon", "Oslo"),
+        (None, "Oslo"),
+    ],
+)
+def test_all_locations_follow_the_primary_one(every: object, expected: str) -> None:
+    body = sample("lever")
+    body[0]["categories"]["allLocations"] = every
+    result = lever.fetch(Recorder(answer(body)).client, LEVER)
+    assert result.postings[0].location == expected

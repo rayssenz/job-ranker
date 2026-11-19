@@ -2,6 +2,7 @@
 
 import os
 import time
+from datetime import timedelta
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
@@ -10,9 +11,11 @@ import httpx
 import typer
 from rich.console import Console
 
-from jobranker.collect import DEFAULT_MAX_RESULTS, collect
+from jobranker.collect import DEFAULT_MAX_RESULTS, collect, utc_now
 from jobranker.config import ConfigError, load_companies, load_searches, read_token
 from jobranker.display import RunDisplay, summary
+from jobranker.profile import Profile, ProfileError, load_profile
+from jobranker.rules import RULES_VERSION, Reason, check
 from jobranker.sources import linkedin
 from jobranker.store import Store, StoreError
 
@@ -124,3 +127,74 @@ def collect_command(
     display.line(summary(reports, time.monotonic() - started))
     if all(report.error is not None for report in reports):
         raise typer.Exit(1)
+
+
+ProfileOption = Annotated[Path, typer.Option(help="Private profile. Not committed.")]
+DatabaseOption = Annotated[Path, typer.Option(help="SQLite file the postings are stored in.")]
+NO_RESULTS = "No rule results for this profile. Run `jobrank rules` first."
+NO_POSTINGS = "No postings are stored. Run `jobrank collect` first."
+NOTHING_PASSED = "No posting passed the rules."
+# About a hundred years. A larger number cannot be subtracted from a date.
+MAX_DAYS = 36500
+
+
+def _open(profile: Path, db: Path) -> tuple[Profile, Store]:
+    """Load the profile and open the store, or stop with a short message."""
+    try:
+        loaded = load_profile(profile)
+        # Opening a missing file would create it, which hides a mistyped path.
+        if not db.is_file():
+            raise StoreError(f"{db}: not found. Run `jobrank collect` first.")
+        return loaded, Store(db)
+    except (ProfileError, StoreError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+
+
+@app.command("rules")
+def rules_command(
+    profile: ProfileOption = Path("profile.yaml"),
+    db: DatabaseOption = Path("data/ranker.db"),
+) -> None:
+    """Drop the stored postings that cannot fit the profile. Sends no request."""
+    loaded, store = _open(profile, db)
+    with store:
+        pending = store.pending_rules(loaded.digest, RULES_VERSION)
+        results = ((stored, check(stored.posting, loaded)) for stored in pending)
+        store.save_rule_results(results, loaded.digest, RULES_VERSION, utc_now())
+        counts = store.rule_counts(loaded.digest, RULES_VERSION)
+    typer.echo(f"checked {len(pending)}")
+    for reason in Reason:
+        typer.echo(f"{reason.value}: {counts.get(reason.value, 0)}")
+    typer.echo(f"passed {counts['passed']} postings in {counts['groups']} groups")
+
+
+@app.command("list")
+def list_command(
+    profile: ProfileOption = Path("profile.yaml"),
+    db: DatabaseOption = Path("data/ranker.db"),
+    days: Annotated[
+        int | None,
+        typer.Option(min=1, max=MAX_DAYS, help="Only postings first seen in the last N days."),
+    ] = None,
+    limit: Annotated[int, typer.Option(min=1, help="Most postings to print.")] = 50,
+) -> None:
+    """Print the postings that passed the rules, newest first. Sends no request."""
+    loaded, store = _open(profile, db)
+    since = None if days is None else utc_now() - timedelta(days=days)
+    with store:
+        stored_count = store.count()
+        counts = store.rule_counts(loaded.digest, RULES_VERSION)
+        groups = store.passed_groups(loaded.digest, RULES_VERSION, since=since, limit=limit)
+    if not stored_count:
+        typer.echo(NO_POSTINGS)
+    elif not counts["checked"]:
+        typer.echo(NO_RESULTS)
+    elif not counts["groups"]:
+        typer.echo(NOTHING_PASSED)
+    elif not groups:
+        typer.echo(f"No posting that passed the rules was first seen in the last {days} days.")
+    for stored in groups:
+        posting = stored.posting
+        typer.echo(f"{posting.company} | {posting.title} | {posting.location}")
+        typer.echo(f"  {posting.url}")

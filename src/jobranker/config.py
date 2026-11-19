@@ -63,8 +63,9 @@ def _entries(path: Path, key: str) -> list[Any]:
         data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError) as error:
         raise ConfigError(f"{path}: cannot be read ({type(error).__name__})") from None
-    except yaml.YAMLError as error:
-        raise ConfigError(f"{path}: not valid YAML ({type(error).__name__})") from error
+    except (yaml.YAMLError, ValueError) as error:
+        # The loader raises a plain ValueError for a value such as an impossible date.
+        raise ConfigError(f"{path}: not valid YAML ({type(error).__name__})") from None
     if data is None:
         return []
     # Any other top-level key is refused, so a mistyped key is not read as an empty list.

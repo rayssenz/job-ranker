@@ -1,5 +1,6 @@
 """What every source adapter shares: the result type, the error type and the request helper."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,3 +58,18 @@ def text(value: Any) -> str:
     if isinstance(value, str | int):
         return str(value).strip()
     return ""
+
+
+def places(names: Iterable[Any]) -> str:
+    """Place names as one text, each named once, in the order given.
+
+    A job offered in several places keeps all of them, so it is not judged by the first one.
+    """
+    return "; ".join(dict.fromkeys(name for name in map(text, names) if name))
+
+
+def values(entries: Any, key: str) -> list[Any]:
+    """The value of `key` in each object of a list. Anything else gives an empty list."""
+    if not isinstance(entries, list):
+        return []
+    return [entry.get(key) for entry in entries if isinstance(entry, dict)]

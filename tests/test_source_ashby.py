@@ -75,3 +75,28 @@ def test_wrong_shape_raises(body: object) -> None:
     with pytest.raises(SourceError) as error:
         ashby.fetch(Recorder(answer(body)).client, ASHBY)
     assert error.value.reason == "unexpected shape"
+
+
+@pytest.mark.parametrize(
+    ("secondary", "expected"),
+    [
+        ([{"location": "Lisbon"}, {"location": "Porto"}], "Vienna; Lisbon; Porto"),
+        ([{"location": "Vienna"}, {"location": " Lisbon "}], "Vienna; Lisbon"),
+        ([{"location": ""}, {}, None, "Graz", {"location": 7}], "Vienna; 7"),
+        ("not a list", "Vienna"),
+        (None, "Vienna"),
+    ],
+)
+def test_secondary_locations_follow_the_primary_one(secondary: object, expected: str) -> None:
+    body = sample("ashby")
+    body["jobs"][0]["secondaryLocations"] = secondary
+    result = ashby.fetch(Recorder(answer(body)).client, ASHBY)
+    assert result.postings[0].location == expected
+
+
+def test_secondary_location_is_used_when_the_primary_is_missing() -> None:
+    body = sample("ashby")
+    body["jobs"][0]["location"] = None
+    body["jobs"][0]["secondaryLocations"] = [{"location": "Lisbon"}]
+    result = ashby.fetch(Recorder(answer(body)).client, ASHBY)
+    assert result.postings[0].location == "Lisbon"

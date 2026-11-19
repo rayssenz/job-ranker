@@ -4,7 +4,7 @@ import httpx
 
 from jobranker.config import Company
 from jobranker.models import Posting, Remote
-from jobranker.sources.base import FetchResult, SourceError, get_json, items, text
+from jobranker.sources.base import FetchResult, SourceError, get_json, items, places, text, values
 
 SOURCE = "ashby"
 URL = "https://api.ashbyhq.com/posting-api/job-board/{token}"
@@ -34,7 +34,9 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
                 posting_id=posting_id,
                 company=company.name,
                 title=title,
-                location=text(job.get("location")),
+                location=places(
+                    [job.get("location"), *values(job.get("secondaryLocations"), "location")]
+                ),
                 remote=_REMOTE.get(text(job.get("workplaceType")), Remote.UNKNOWN),
                 url=url,
                 description=text(job.get("descriptionPlain")),

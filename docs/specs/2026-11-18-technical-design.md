@@ -20,7 +20,7 @@ Out of scope
 
 - Writing or tailoring CVs and cover letters.
 - Filling in or submitting applications.
-- A web interface.
+- A hosted web interface. The dashboard of milestone 3 runs on the local machine only.
 - Learning automatically from the marks. They are used only to measure.
 
 Never
@@ -67,15 +67,15 @@ The same job can arrive from a company feed and from the search source. A new po
 
 ### Storage
 
-One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log.
+One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log. Milestone 2 adds the rule results. An older database is upgraded in place when it is opened.
 
 ### Profile
 
-`profile.yaml` is not committed. `config/profile.example.yaml` is a fictional example. The fields are target roles, skills, years of experience, countries and remote preference, languages with levels, seniority range, things to avoid, and free-text notes for the judge.
+`profile.yaml` is not committed. `config/profile.example.yaml` is a fictional example. The rules read the accepted places, the remote preference, the accepted and rejected level words, the languages, the words to avoid and the words a title must hold. The judge reads the target roles, the skills and the free-text notes. Every word list is part of the profile, so the program holds no list that describes one person's search.
 
 ### Rules
 
-The rules are pure functions over a posting and the profile. They check for a country or remote mismatch, a required language the profile lacks, seniority in the title outside the range, and a match on the avoid list. Each rule returns pass or a reason code. No model is involved, so the same input always gives the same output.
+The rules are pure functions over a posting and the profile. They check for a place or remote mismatch, a rejected level word in the title, a title that asks for a speaker of a language the profile lacks, a match on the avoid list, and a title without any of the wanted words. Each rule returns pass or a reason code, and a rule drops a posting only when the mismatch is certain. The result is stored per posting and computed again when the posting, the profile or the rules change. The milestone 2 spec has the exact conditions. No model is involved, so the same input always gives the same output.
 
 ### Judge
 
@@ -145,18 +145,19 @@ Stack: Python 3.12 or newer, uv for environments, ruff, a type checker, pytest, 
 - One short spec per milestone in `docs/specs/`: problem, non-goals, acceptance criteria.
 - Decision records in `docs/decisions/`, written as ADRs (architecture decision records) when the choice is made.
 - Tests are written first. Each milestone is one pull request with a description.
-- CI runs lint, a type check and the tests. The evaluation replay, with its threshold and staleness check, joins CI in milestone 5.
+- CI runs lint, a type check and the tests. The evaluation replay, with its threshold and staleness check, joins CI in milestone 6.
 
 ## 10. Milestones
 
 0. Repository, tooling, CI skeleton, decision record 1.
 1. Sources and storage.
 2. Rules.
-3. Judge with recording.
-4. Marking command and the first 30 cases.
-5. Evaluation, report, CI gate.
-6. Shortlist, Hermes delivery, Claude Code skill.
-7. README and demo.
+3. Local dashboard: the postings that passed and the state of the last runs.
+4. Judge with recording.
+5. Marking command and the first 30 cases.
+6. Evaluation, report, CI gate.
+7. Shortlist, Hermes delivery, Claude Code skill.
+8. README and demo.
 
 Two things are left for later: marking by Telegram reply, and growing the set to 60 cases.
 

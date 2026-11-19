@@ -34,7 +34,7 @@ def test_creates_missing_folder_and_schema_version(tmp_path: Path) -> None:
     path = tmp_path / "data" / "ranker.db"
     Store(path).close()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     connection.close()
 
 
@@ -246,6 +246,15 @@ def assert_refused(path: Path) -> None:
     assert error.value.__cause__ is None
 
 
+@pytest.mark.parametrize("version", [-1, 3, 99])
+def test_version_without_an_upgrade_step_is_refused(tmp_path: Path, version: int) -> None:
+    path = tmp_path / "ranker.db"
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA user_version = {version}")
+    connection.close()
+    assert_refused(path)
+
+
 def test_file_that_is_not_a_database_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "ranker.db"
     path.write_text("This is a text file, not a database. " * 40)
@@ -284,3 +293,185 @@ def test_database_of_another_program_is_refused_and_left_alone(tmp_path: Path) -
     tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master")]
     connection.close()
     assert tables == ["users"]
+
+
+# The schema of milestone 1, kept here so the upgrade is tested against what was shipped.
+SCHEMA_V1 = """
+CREATE TABLE postings (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,
+  board TEXT NOT NULL,
+  posting_id TEXT NOT NULL,
+  company TEXT NOT NULL,
+  title TEXT NOT NULL,
+  location TEXT NOT NULL,
+  remote TEXT NOT NULL,
+  url TEXT NOT NULL,
+  description TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  match_key TEXT NOT NULL,
+  duplicate_of INTEGER REFERENCES postings(id),
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  UNIQUE (source, board, posting_id)
+);
+CREATE INDEX postings_match_key ON postings (match_key);
+CREATE TABLE posting_versions (
+  posting_id INTEGER NOT NULL REFERENCES postings(id),
+  content_hash TEXT NOT NULL,
+  seen_at TEXT NOT NULL
+);
+CREATE TABLE run_log (
+  run_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  target TEXT NOT NULL,
+  fetched INTEGER NOT NULL,
+  new INTEGER NOT NULL,
+  changed INTEGER NOT NULL,
+  duplicate INTEGER NOT NULL,
+  skipped INTEGER NOT NULL,
+  error TEXT
+);
+"""
+
+
+def version_1_database(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA_V1)
+    connection.execute(
+        "INSERT INTO postings VALUES (1, 'greenhouse', 'northwindrobotics', '1001',"
+        " 'Northwind Robotics', 'ML Engineer', 'Lisbon', 'unknown', 'https://example.test/1',"
+        " 'Build models.', 'hash-1', 'northwind robotics|ml engineer', NULL, ?, ?)",
+        (T1.isoformat(), T1.isoformat()),
+    )
+    connection.execute("INSERT INTO posting_versions VALUES (1, 'hash-1', ?)", (T1.isoformat(),))
+    connection.execute(
+        "INSERT INTO run_log VALUES ('run1', ?, 'greenhouse', 'Northwind Robotics',"
+        " 1, 1, 0, 0, 0, NULL)",
+        (T1.isoformat(),),
+    )
+    connection.execute("PRAGMA user_version = 1")
+    connection.commit()
+    connection.close()
+
+
+def test_version_1_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    version_1_database(path)
+    with Store(path) as store:
+        assert store.count() == 1
+        stored = store.get("greenhouse", "northwindrobotics", "1001")
+        assert stored is not None
+        assert (stored.posting.title, stored.first_seen) == ("ML Engineer", T1)
+        assert store.versions(stored.id) == [("hash-1", T1)]
+        assert [row["run_id"] for row in store.runs()] == ["run1"]
+        assert store.pending_rules("profile-a", 1) == [stored]
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    connection.close()
+
+
+def test_failed_upgrade_leaves_the_version_1_database_as_it_was(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    version_1_database(path)
+    connection = sqlite3.connect(path)
+    # A table of the same name makes the upgrade fail part-way.
+    connection.execute("CREATE TABLE rule_results (other INTEGER)")
+    connection.commit()
+    connection.close()
+    assert_refused(path)
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM postings").fetchone()[0] == 1
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(rule_results)")]
+    connection.close()
+    assert columns == ["other"]
+
+
+def checked(store: Store, posting: Posting, reasons: list[str], profile: str = "profile-a") -> None:
+    stored = store.get(posting.source, posting.board, posting.posting_id)
+    assert stored is not None
+    store.save_rule_results([(stored, reasons)], profile, 1, T2)
+
+
+def test_posting_without_a_result_is_pending_until_it_is_checked(store: Store) -> None:
+    first, second = make_posting(), make_posting(posting_id="1002", title="Data Engineer")
+    store.save(first, T1)
+    store.save(second, T1)
+    assert [s.posting for s in store.pending_rules("profile-a", 1)] == [first, second]
+    checked(store, first, [])
+    assert [s.posting for s in store.pending_rules("profile-a", 1)] == [second]
+    checked(store, second, ["place", "level"])
+    assert store.pending_rules("profile-a", 1) == []
+
+
+def test_results_go_stale_with_the_profile_the_rules_or_the_posting(store: Store) -> None:
+    first, second = make_posting(), make_posting(posting_id="1002", title="Data Engineer")
+    store.save(first, T1)
+    store.save(second, T1)
+    checked(store, first, [])
+    checked(store, second, [])
+    assert len(store.pending_rules("profile-b", 1)) == 2
+    assert len(store.pending_rules("profile-a", 2)) == 2
+    changed = make_posting(description="Build better models.")
+    store.save(changed, T2)
+    assert [s.posting for s in store.pending_rules("profile-a", 1)] == [changed]
+    checked(store, changed, ["level"])
+    assert store.pending_rules("profile-a", 1) == []
+
+
+def test_rule_counts_cover_current_results_only(store: Store) -> None:
+    postings = [make_posting(posting_id=str(n), title=f"Role {n}") for n in range(1, 5)]
+    for posting in postings:
+        store.save(posting, T1)
+    checked(store, postings[0], [])
+    checked(store, postings[1], ["place"])
+    checked(store, postings[2], ["place", "level"])
+    checked(store, postings[3], [], profile="profile-old")
+    assert store.rule_counts("profile-a", 1) == {
+        "checked": 3,
+        "passed": 1,
+        "groups": 1,
+        "place": 2,
+        "level": 1,
+    }
+
+
+def test_group_passes_when_only_the_linked_copy_passes(store: Store) -> None:
+    feed, copy = make_posting(location="Madrid"), linkedin_posting("900")
+    store.save(feed, T1)
+    assert store.save(copy, T2) is Outcome.DUPLICATE
+    checked(store, feed, ["place"])
+    checked(store, copy, [])
+    groups = store.passed_groups("profile-a", 1, since=None, limit=10)
+    assert [g.posting for g in groups] == [copy]
+    assert store.rule_counts("profile-a", 1)["groups"] == 1
+
+
+def test_group_is_listed_once_with_the_original_when_it_passed(store: Store) -> None:
+    feed, copy = make_posting(), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    checked(store, feed, [])
+    checked(store, copy, [])
+    groups = store.passed_groups("profile-a", 1, since=None, limit=10)
+    assert [g.posting for g in groups] == [feed]
+    assert store.rule_counts("profile-a", 1) == {"checked": 2, "passed": 2, "groups": 1}
+
+
+def test_passed_groups_are_newest_first_and_can_be_limited(store: Store) -> None:
+    old = make_posting(posting_id="1", title="Old Role")
+    new = make_posting(posting_id="2", title="New Role")
+    dropped = make_posting(posting_id="3", title="Dropped Role")
+    store.save(old, T1)
+    store.save(new, T2)
+    store.save(dropped, T2)
+    checked(store, old, [])
+    checked(store, new, [])
+    checked(store, dropped, ["title"])
+    listed = store.passed_groups("profile-a", 1, since=None, limit=10)
+    assert [g.posting for g in listed] == [new, old]
+    assert [g.posting for g in store.passed_groups("profile-a", 1, since=T2, limit=10)] == [new]
+    assert [g.posting for g in store.passed_groups("profile-a", 1, since=None, limit=1)] == [new]
+    assert store.passed_groups("profile-b", 1, since=None, limit=10) == []

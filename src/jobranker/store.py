@@ -1,6 +1,7 @@
 """SQLite storage for postings, their versions and the run log."""
 
 import sqlite3
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -10,9 +11,9 @@ from typing import Self
 
 from jobranker.models import Posting, Remote
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-_SCHEMA = """
+_SCHEMA_V1 = """
 CREATE TABLE postings (
   id INTEGER PRIMARY KEY,
   source TEXT NOT NULL,
@@ -50,6 +51,26 @@ CREATE TABLE run_log (
   error TEXT
 );
 """
+
+_SCHEMA_V2 = """
+CREATE TABLE rule_results (
+  posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
+  content_hash TEXT NOT NULL,
+  profile_hash TEXT NOT NULL,
+  rules_version INTEGER NOT NULL,
+  passed INTEGER NOT NULL,
+  reasons TEXT NOT NULL,
+  checked_at TEXT NOT NULL
+);
+"""
+
+# Step n brings a database from version n - 1 to version n.
+_STEPS = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+
+# A result counts only for the posting text, the profile and the rules it was computed for.
+_CURRENT = (
+    "r.content_hash = p.content_hash AND r.profile_hash = :profile AND r.rules_version = :rules"
+)
 
 
 class StoreError(RuntimeError):
@@ -91,9 +112,11 @@ class Store:
             db.execute("PRAGMA foreign_keys = ON")
             version = db.execute("PRAGMA user_version").fetchone()[0]
             foreign = version == 0 and db.execute("SELECT 1 FROM sqlite_master").fetchone()
-            if version == 0 and not foreign:
-                # One transaction, so a run that is stopped here leaves an empty file behind.
-                db.executescript(f"BEGIN;{_SCHEMA}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;")
+            if not foreign and 0 <= version < SCHEMA_VERSION:
+                steps = "".join(_STEPS[step] for step in range(version + 1, SCHEMA_VERSION + 1))
+                # One transaction, so a new file or an upgrade that is stopped or fails here
+                # stays as it was. The stored rows are not touched by any step.
+                db.executescript(f"BEGIN;{steps}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;")
         except (sqlite3.Error, OSError) as error:
             if db is not None:
                 db.close()
@@ -105,7 +128,8 @@ class Store:
             db.close()
             # Tables without a schema version belong to something else and are left alone.
             raise StoreError(f"{path} holds other data and is not a database of this program")
-        if version not in (0, SCHEMA_VERSION):
+        # No step leads from a version below zero or above the one this program knows.
+        if not 0 <= version <= SCHEMA_VERSION:
             db.close()
             raise StoreError(
                 f"{path} has schema version {version}, this program needs {SCHEMA_VERSION}"
@@ -276,8 +300,10 @@ class Store:
             "SELECT * FROM postings WHERE source = ? AND board = ? AND posting_id = ?",
             (source, board, posting_id),
         ).fetchone()
-        if row is None:
-            return None
+        return None if row is None else self._stored(row)
+
+    @staticmethod
+    def _stored(row: sqlite3.Row) -> StoredPosting:
         return StoredPosting(
             id=row["id"],
             posting=Posting(
@@ -296,6 +322,86 @@ class Store:
             first_seen=datetime.fromisoformat(row["first_seen"]),
             last_seen=datetime.fromisoformat(row["last_seen"]),
         )
+
+    def pending_rules(self, profile_hash: str, rules_version: int) -> list[StoredPosting]:
+        """The postings with no rule result for their text, this profile and these rules."""
+        rows = self._db.execute(
+            "SELECT p.* FROM postings p LEFT JOIN rule_results r ON r.posting_id = p.id"
+            f" WHERE r.posting_id IS NULL OR NOT ({_CURRENT}) ORDER BY p.id",
+            {"profile": profile_hash, "rules": rules_version},
+        ).fetchall()
+        return [self._stored(row) for row in rows]
+
+    def save_rule_results(
+        self,
+        results: Iterable[tuple[StoredPosting, Sequence[str]]],
+        profile_hash: str,
+        rules_version: int,
+        now: datetime,
+    ) -> None:
+        """Store the reason codes of each posting, replacing an older result. No codes: passed."""
+        moment = _to_text(now)
+        with self._db:
+            self._db.executemany(
+                "INSERT OR REPLACE INTO rule_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        stored.id,
+                        stored.content_hash,
+                        profile_hash,
+                        rules_version,
+                        int(not reasons),
+                        ",".join(reasons),
+                        moment,
+                    )
+                    for stored, reasons in results
+                ),
+            )
+
+    def rule_counts(self, profile_hash: str, rules_version: int) -> dict[str, int]:
+        """Counts over the current results: checked, passed, groups, and one per reason code."""
+        scope = {"profile": profile_hash, "rules": rules_version}
+        current = f"FROM postings p JOIN rule_results r ON r.posting_id = p.id WHERE {_CURRENT}"
+        counts = {"checked": 0, "passed": 0, "groups": 0}
+        rows = self._db.execute(f"SELECT r.reasons, COUNT(*) {current} GROUP BY r.reasons", scope)
+        for reasons, number in rows:
+            counts["checked"] += number
+            if not reasons:
+                counts["passed"] += number
+            for code in filter(None, reasons.split(",")):
+                counts[code] = counts.get(code, 0) + number
+        counts["groups"] = self._db.execute(
+            f"SELECT COUNT(DISTINCT COALESCE(p.duplicate_of, p.id)) {current} AND r.passed = 1",
+            scope,
+        ).fetchone()[0]
+        return counts
+
+    def passed_groups(
+        self, profile_hash: str, rules_version: int, *, since: datetime | None, limit: int
+    ) -> list[StoredPosting]:
+        """One posting per group of linked postings that has a passing member, newest first.
+
+        The original stands for its group when it passed, otherwise the first copy that did.
+        """
+        rows = self._db.execute(
+            "WITH passed AS ("
+            "  SELECT p.id, COALESCE(p.duplicate_of, p.id) AS grp"
+            f"  FROM postings p JOIN rule_results r ON r.posting_id = p.id"
+            f"  WHERE {_CURRENT} AND r.passed = 1"
+            "), chosen AS ("
+            "  SELECT COALESCE(MAX(CASE WHEN id = grp THEN id END), MIN(id)) AS id"
+            "  FROM passed GROUP BY grp"
+            ") SELECT p.* FROM chosen JOIN postings p ON p.id = chosen.id"
+            " WHERE :since IS NULL OR p.first_seen >= :since"
+            " ORDER BY p.first_seen DESC, p.id DESC LIMIT :limit",
+            {
+                "profile": profile_hash,
+                "rules": rules_version,
+                "since": None if since is None else _to_text(since),
+                "limit": limit,
+            },
+        ).fetchall()
+        return [self._stored(row) for row in rows]
 
     def count(self) -> int:
         result: int = self._db.execute("SELECT COUNT(*) FROM postings").fetchone()[0]

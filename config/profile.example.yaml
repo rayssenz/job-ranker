@@ -1,0 +1,25 @@
+# Copy to profile.yaml in the repository root and replace the values. That file is not committed.
+# Every entry here is made up.
+#
+# places:        a posting in one of these places fits
+# remote.accept: remote postings can fit
+# remote.places: only when the location names one of these; an empty list accepts any
+# levels.accept: level words that fit
+# levels.reject: level words that rule a title out, unless it also holds an accepted one
+# languages:     languages the person can work in
+# avoid:         words in a company name or a title that rule a posting out
+# title_words:   when not empty, a title must hold at least one of these
+places: [Lisbon, Porto]
+remote:
+  accept: true
+  places: [Portugal, Europe]
+levels:
+  accept: [junior, graduate, intern, internship, working student]
+  reject: [senior, staff, principal, lead, head, director]
+languages: [English, Portuguese]
+avoid: [gambling]
+title_words: [engineer, developer, data, machine learning]
+# Read by the judge from milestone 4 on.
+roles: [machine learning engineer]
+skills: [Python, SQL]
+notes: ""
