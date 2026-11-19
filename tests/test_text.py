@@ -61,3 +61,32 @@ def test_normalise_keeps_plus_sharp_and_leading_dot_as_words(value: str, expecte
 )
 def test_normalise_company(name: str, expected: str) -> None:
     assert normalise_company(name) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("<table><tr><td>a</td><td>b</td></tr></table>", "a\nb"),
+        ("<dl><dt>Term</dt><dd>Def</dd></dl>", "Term\nDef"),
+        ("Intro<p>Body</p>", "Intro\nBody"),
+        ("<p>a</p><script>var x=1;</script><style>p{}</style><p>b</p>", "a\nb"),
+        ('<a href="x>y">t</a>', "t"),
+        ("<p>kept<!-- hidden --></p>", "kept"),
+    ],
+)
+def test_html_to_text_separates_blocks_and_drops_code(raw: str, expected: str) -> None:
+    assert html_to_text(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Café Nord", "Café Nord"),
+        ("Café Nord", "CAFE NORD"),
+        ("Straße", "STRASSE"),
+        ("İstanbul Labs", "istanbul labs"),
+        ("ＡＣＭＥ", "acme"),
+    ],
+)
+def test_normalise_ignores_case_accents_and_unicode_form(first: str, second: str) -> None:
+    assert normalise(first) == normalise(second) != ""

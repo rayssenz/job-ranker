@@ -1,30 +1,66 @@
 """Text helpers: HTML to plain text, and normalised forms for matching."""
 
-import html
 import re
+import unicodedata
+from html.parser import HTMLParser
 
-_BLOCK_END = re.compile(r"<br\s*/?>|</(?:p|div|li|ul|ol|h[1-6]|tr|section)\s*>", re.IGNORECASE)
-_TAG = re.compile(r"<!--.*?-->|</?[a-zA-Z][^>]*>", re.DOTALL)
+# Tags that start or end a line of text.
+_BLOCKS = frozenset(
+    {
+        "address", "article", "aside", "blockquote", "br", "dd", "div", "dl", "dt", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "ol", "p", "pre", "section",
+        "table", "td", "th", "tr", "ul",
+    }
+)  # fmt: skip
+# Tags whose content is code and never text for a reader.
+_HIDDEN = frozenset({"script", "style"})
 _NOT_WORD = re.compile(r"[\W_]+")
 # A dot that starts a word and is followed by a letter, as in .NET.
 _LEADING_DOT = re.compile(r"(?<!\w)\.(?=[^\W\d_])")
 _LEGAL_FORMS = frozenset({"gmbh", "ag", "se", "inc", "ltd", "llc"})
 
 
+class _TextCollector(HTMLParser):
+    """Keeps the text between tags. Character references are unescaped once by the parser."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._hidden = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _HIDDEN:
+            self._hidden += 1
+        elif tag in _BLOCKS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HIDDEN:
+            self._hidden = max(0, self._hidden - 1)
+        elif tag in _BLOCKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._hidden:
+            self.parts.append(data)
+
+
 def html_to_text(raw: str) -> str:
     """Return the readable text of an HTML fragment, one line per block."""
-    text = _BLOCK_END.sub("\n", raw)
-    text = _TAG.sub("", text)
-    # Unescaped once and after the tags are gone, so text such as List&lt;String&gt; is kept.
-    text = html.unescape(text)
-    lines = (" ".join(line.split()) for line in text.splitlines())
+    collector = _TextCollector()
+    collector.feed(raw)
+    collector.close()
+    lines = (" ".join(line.split()) for line in "".join(collector.parts).splitlines())
     return "\n".join(line for line in lines if line)
 
 
 def normalise(value: str) -> str:
-    """Lower case, punctuation removed, single spaces."""
+    """Case, accents and punctuation removed, single spaces."""
+    # Decomposed after case folding, so one name gives one form however it was typed.
+    text = unicodedata.normalize("NFKD", value.casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
     # These marks tell titles such as C++, C# and .NET apart, so they are kept as words.
-    text = _LEADING_DOT.sub(" dot ", value.lower())
+    text = _LEADING_DOT.sub(" dot ", text)
     text = text.replace("+", " plus ").replace("#", " sharp ")
     return _NOT_WORD.sub(" ", text).strip()
 
