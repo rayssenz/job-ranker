@@ -90,10 +90,10 @@ class Store:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA foreign_keys = ON")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                db.executescript(_SCHEMA)
-                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-                db.commit()
+            foreign = version == 0 and db.execute("SELECT 1 FROM sqlite_master").fetchone()
+            if version == 0 and not foreign:
+                # One transaction, so a run that is stopped here leaves an empty file behind.
+                db.executescript(f"BEGIN;{_SCHEMA}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;")
         except (sqlite3.Error, OSError) as error:
             if db is not None:
                 db.close()
@@ -101,6 +101,10 @@ class Store:
             raise StoreError(
                 f"{path} cannot be used as the database ({type(error).__name__})"
             ) from None
+        if foreign:
+            db.close()
+            # Tables without a schema version belong to something else and are left alone.
+            raise StoreError(f"{path} holds other data and is not a database of this program")
         if version not in (0, SCHEMA_VERSION):
             db.close()
             raise StoreError(

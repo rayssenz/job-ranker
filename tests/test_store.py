@@ -271,3 +271,16 @@ def test_log_run_round_trip(store: Store) -> None:
         ("lever", 0, 0, 0, "HTTP 404"),
     ]
     assert rows[0]["run_id"] == "run1"
+
+
+def test_database_of_another_program_is_refused_and_left_alone(tmp_path: Path) -> None:
+    path = tmp_path / "other.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE users (id INTEGER)")
+    connection.commit()
+    connection.close()
+    assert_refused(path)
+    connection = sqlite3.connect(path)
+    tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master")]
+    connection.close()
+    assert tables == ["users"]
