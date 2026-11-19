@@ -34,7 +34,8 @@ def get_json(client: httpx.Client, method: str, url: str, **kwargs: Any) -> Any:
         raise SourceError("timeout") from None
     except httpx.HTTPError:
         raise SourceError("connection error") from None
-    if response.status_code >= 400:
+    # Redirects are not followed, so a moved board is reported with its own status.
+    if not response.is_success:
         raise SourceError(f"HTTP {response.status_code}")
     try:
         return response.json()

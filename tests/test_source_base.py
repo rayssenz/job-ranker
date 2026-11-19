@@ -48,3 +48,12 @@ def test_not_json_reason() -> None:
     with pytest.raises(SourceError) as error:
         fetch(recorder)
     assert error.value.reason == "not JSON"
+
+
+def test_redirect_is_reported_with_its_status() -> None:
+    recorder = Recorder(
+        lambda request: httpx.Response(301, headers={"Location": "https://example.test/new"})
+    )
+    with pytest.raises(SourceError) as error:
+        get_json(recorder.client, "GET", "https://example.test/feed")
+    assert error.value.reason == "HTTP 301"

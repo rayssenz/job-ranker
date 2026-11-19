@@ -21,7 +21,8 @@ def test_request_address_body_and_cost_cap() -> None:
     assert request.method == "POST"
     assert request.url.host == "api.apify.com"
     assert request.url.path == "/v2/actors/valig~linkedin-jobs-scraper/run-sync-get-dataset-items"
-    assert dict(request.url.params) == {"maxTotalChargeUsd": "0.11"}
+    # Two caps, because Apify applies each one to a different kind of pricing.
+    assert dict(request.url.params) == {"maxTotalChargeUsd": "0.11", "maxItems": "50"}
     assert json.loads(request.content) == {
         "keywords": "machine learning engineer",
         "location": "Lisbon",

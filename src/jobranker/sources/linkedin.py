@@ -19,6 +19,7 @@ URL = "https://api.apify.com/v2/actors/{actor}/run-sync-get-dataset-items"
 # The endpoint answers 408 after 300 seconds, so the client waits a little longer.
 REQUEST_TIMEOUT_SECONDS = 320.0
 # Upper bound used for the cost cap, above the default actor's price per result.
+# It fits the default actor only: with another actor the cap can be too low or too high.
 MAX_USD_PER_RESULT = 0.002
 _RUN_START_ALLOWANCE_USD = 0.01
 # The cap is worked out in whole thousandths of a dollar, so no float error can lower it.
@@ -72,7 +73,9 @@ def fetch(
         client,
         "POST",
         URL.format(actor=actor),
-        params={"maxTotalChargeUsd": cost_cap(limit)},
+        # Apify applies maxTotalChargeUsd to actors billed per event and maxItems to actors
+        # billed per result, so both are sent.
+        params={"maxTotalChargeUsd": cost_cap(limit), "maxItems": limit},
         # The token goes in the header so it is never part of an address.
         headers={"Authorization": f"Bearer {token}"},
         json={
