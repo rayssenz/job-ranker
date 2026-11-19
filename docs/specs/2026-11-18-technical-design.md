@@ -135,7 +135,7 @@ Stack: Python 3.12 or newer, uv for environments, ruff, a type checker, pytest, 
 - One short spec per milestone in `docs/specs/`: problem, non-goals, acceptance criteria.
 - Decision records in `docs/decisions/`, written as ADRs (architecture decision records) when the choice is made.
 - Tests are written first. Each milestone is one pull request with a description.
-- CI runs lint, a type check, the tests, and the evaluation replay with its threshold and staleness check.
+- CI runs lint, a type check and the tests. The evaluation replay, with its threshold and staleness check, joins CI in milestone 5.
 
 ## 10. Milestones
 

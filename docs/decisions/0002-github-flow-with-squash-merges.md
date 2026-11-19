@@ -20,4 +20,4 @@ The project uses GitHub Flow with squash merges.
 ## Consequences
 
 * `main` has one commit per milestone. The individual commits stay on the pull request.
-* Squashing does not remove commits that were already pushed to a branch, so private files must never be pushed. The ignore list and a test guard against that.
+* Squashing does not remove commits that were already pushed to a branch, so private files must never be pushed. The ignore list keeps them out of commits, and a test fails when one is tracked at the tip of a branch. Neither removes a file from commits that were already pushed.
