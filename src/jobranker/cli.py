@@ -1,7 +1,10 @@
 """Command-line entry point. Later milestones attach subcommands to `app`."""
 
+import contextlib
 import os
+import socket
 import time
+import webbrowser
 from datetime import timedelta
 from importlib.metadata import version
 from pathlib import Path
@@ -9,15 +12,19 @@ from typing import Annotated
 
 import httpx
 import typer
+import uvicorn
+from fastapi import FastAPI
 from rich.console import Console
 
 from jobranker.collect import DEFAULT_MAX_RESULTS, collect, utc_now
 from jobranker.config import ConfigError, load_companies, load_searches, read_token
 from jobranker.display import RunDisplay, summary
 from jobranker.profile import Profile, ProfileError, load_profile
-from jobranker.rules import RULES_VERSION, Reason, check
+from jobranker.rules import RULES_VERSION, Reason
+from jobranker.screening import apply_rules
 from jobranker.sources import linkedin
 from jobranker.store import Store, StoreError
+from jobranker.web.app import create_app
 
 FEED_TIMEOUT_SECONDS = 20.0
 NO_CONFIGURATION = (
@@ -159,11 +166,9 @@ def rules_command(
     """Drop the stored postings that cannot fit the profile. Sends no request."""
     loaded, store = _open(profile, db)
     with store:
-        pending = store.pending_rules(loaded.digest, RULES_VERSION)
-        results = ((stored, check(stored.posting, loaded)) for stored in pending)
-        store.save_rule_results(results, loaded.digest, RULES_VERSION, utc_now())
+        checked = apply_rules(store, loaded, utc_now())
         counts = store.rule_counts(loaded.digest, RULES_VERSION)
-    typer.echo(f"checked {len(pending)}")
+    typer.echo(f"checked {checked}")
     for reason in Reason:
         typer.echo(f"{reason.value}: {counts.get(reason.value, 0)}")
     typer.echo(f"passed {counts['passed']} postings in {counts['groups']} groups")
@@ -198,3 +203,65 @@ def list_command(
         posting = stored.posting
         typer.echo(f"{posting.company} | {posting.title} | {posting.location}")
         typer.echo(f"  {posting.url}")
+
+
+# The dashboard answers on this machine only. No other address is ever bound.
+LOCAL_HOST = "127.0.0.1"
+DEFAULT_PORT = 8765
+
+
+def make_server(application: FastAPI) -> uvicorn.Server:
+    """The server for the dashboard: quiet, and without a header that names its software."""
+    config = uvicorn.Config(
+        application,
+        log_level="warning",
+        access_log=False,
+        server_header=False,
+        proxy_headers=False,
+    )
+    return uvicorn.Server(config)
+
+
+def serve(application: FastAPI, listener: socket.socket) -> None:
+    """Answer requests on the bound socket until Ctrl+C. Tests replace this function."""
+    make_server(application).run(sockets=[listener])
+
+
+def open_browser(address: str) -> None:
+    """Show the dashboard in the default browser. Tests replace this function."""
+    webbrowser.open(address)
+
+
+@app.command("dashboard")
+def dashboard_command(
+    profile: ProfileOption = Path("profile.yaml"),
+    db: DatabaseOption = Path("data/ranker.db"),
+    port: Annotated[
+        int, typer.Option(min=1024, max=65535, help="Local port the dashboard answers on.")
+    ] = DEFAULT_PORT,
+    no_open: Annotated[bool, typer.Option("--no-open", help="Do not open the browser.")] = False,
+) -> None:
+    """Show the postings that passed the rules in the browser. Answers on this machine only."""
+    loaded, store = _open(profile, db)
+    with store:
+        apply_rules(store, loaded, utc_now())
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # The socket is bound here and not by the server, so a taken port is reported
+        # in one line, and the address is fixed to this machine in one place.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((LOCAL_HOST, port))
+        listener.listen()
+    except OSError:
+        listener.close()
+        typer.echo(f"Port {port} cannot be used. Choose another one with --port.", err=True)
+        raise typer.Exit(1) from None
+    address = f"http://{LOCAL_HOST}:{port}"
+    typer.echo(f"Dashboard at {address} (stop with Ctrl+C)")
+    with listener:
+        if not no_open:
+            open_browser(address)
+        # Ctrl+C is the way to stop the dashboard, so it is not reported as a failure.
+        with contextlib.suppress(KeyboardInterrupt):
+            serve(create_app(db, loaded, port=port), listener)
+    typer.echo("Dashboard stopped.")

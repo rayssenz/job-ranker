@@ -4,7 +4,7 @@ A command-line program that collects new job postings from public company job fe
 
 ## Status
 
-Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Nothing is ranked yet.
+Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Milestone 3 is done: `jobrank dashboard` shows the postings that passed as cards in the browser, with a decision per posting. Nothing is ranked yet.
 
 ## Quick start
 
@@ -49,11 +49,28 @@ Edit `profile.yaml` first. It says which places, level words and languages fit, 
 
 Neither command sends a request.
 
+## Review postings in the browser
+
+```bash
+uv run jobrank dashboard
+```
+
+The command applies the rules, starts a small web application on `http://127.0.0.1:8765` and opens it in the browser. Ctrl+C stops it. Postings collected while it runs show up after a reload.
+
+- **To review** shows the postings that passed the rules as cards, newest first. "Applied" and "Not for me" move a posting to its own tab, so the list gets shorter. A switch keeps student and junior titles only, and a search field looks in title, company and place.
+- **Applied** and **Not for me** show what was decided, each with "Undo".
+- **Runs** shows the last ten collection runs and the sources that the latest one did not collect.
+
+`--port` picks another port (1024 or higher) and `--no-open` leaves the browser alone.
+
+The application answers on this machine only, sends no request, and loads no file from another machine. A posting is text from a third party, so it is always shown as text. Changing a decision needs a token that is made new at each start.
+
 ## Design
 
 - [Technical design](docs/specs/2026-11-18-technical-design.md)
 - [Milestone 1: sources and storage](docs/specs/2026-11-19-m1-sources-and-storage.md)
 - [Milestone 2: rules](docs/specs/2026-11-19-m2-rules.md)
+- [Milestone 3: local dashboard](docs/specs/2026-11-19-m3-dashboard.md)
 - Decision records live in `docs/decisions/`.
 
 ## How this was built

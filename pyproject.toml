@@ -6,11 +6,15 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.165.0",
     "httpx>=0.28.1",
+    "jinja2>=3.1.6",
     "pydantic>=2.14.3",
+    "python-multipart>=0.0.34",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "typer>=0.29.2",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -36,6 +40,10 @@ files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # The test client of Starlette asks for a newer HTTP package. The sources use httpx.
+    "ignore:Using `httpx` with `starlette.testclient`:starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [dependency-groups]
 dev = [

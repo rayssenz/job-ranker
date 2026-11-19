@@ -1,4 +1,4 @@
-"""SQLite storage for postings, their versions and the run log."""
+"""SQLite storage for postings, their versions, the rule results, decisions and the run log."""
 
 import sqlite3
 from collections.abc import Iterable, Sequence
@@ -11,7 +11,7 @@ from typing import Self
 
 from jobranker.models import Posting, Remote
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = """
 CREATE TABLE postings (
@@ -64,12 +64,33 @@ CREATE TABLE rule_results (
 );
 """
 
+_SCHEMA_V3 = """
+CREATE TABLE decisions (
+  posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
+  decision TEXT NOT NULL CHECK (decision IN ('applied','dismissed')),
+  decided_at TEXT NOT NULL
+);
+"""
+
 # Step n brings a database from version n - 1 to version n.
-_STEPS = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+_STEPS = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
 
 # A result counts only for the posting text, the profile and the rules it was computed for.
 _CURRENT = (
     "r.content_hash = p.content_hash AND r.profile_hash = :profile AND r.rules_version = :rules"
+)
+# Linked postings form a group, named by the id of its original.
+_GROUP = "COALESCE({0}.duplicate_of, {0}.id)"
+# The ids of every posting in the group of posting :id.
+_MEMBERS = (
+    f"SELECT m.id FROM postings m WHERE {_GROUP.format('m')} ="
+    f" (SELECT {_GROUP.format('o')} FROM postings o WHERE o.id = :id)"
+)
+# A decision on any member counts for the group. The decided groups are looked up once,
+# from the decisions, and not once per posting, which would read every posting each time.
+_UNDECIDED = (
+    f"{_GROUP.format('p')} NOT IN (SELECT {_GROUP.format('m')}"
+    " FROM decisions d CROSS JOIN postings m ON m.id = d.posting_id)"
 )
 
 
@@ -84,6 +105,24 @@ class Outcome(StrEnum):
     CHANGED = "changed"
     SEEN = "seen"
     DUPLICATE = "duplicate"
+
+
+class Decision(StrEnum):
+    """What the person decided about a group of linked postings."""
+
+    APPLIED = "applied"
+    DISMISSED = "dismissed"
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """One collection run: how many sources it had, how many failed, how many new postings."""
+
+    run_id: str
+    started_at: datetime
+    sources: int
+    not_collected: int
+    new: int
 
 
 @dataclass(frozen=True)
@@ -383,16 +422,29 @@ class Store:
 
         The original stands for its group when it passed, otherwise the first copy that did.
         """
+        return self._passed(profile_hash, rules_version, since=since, limit=limit)
+
+    def _passed(
+        self,
+        profile_hash: str,
+        rules_version: int,
+        *,
+        since: datetime | None = None,
+        limit: int = -1,
+        undecided: bool = False,
+    ) -> list[StoredPosting]:
+        # A negative limit means no limit in SQLite.
         rows = self._db.execute(
             "WITH passed AS ("
-            "  SELECT p.id, COALESCE(p.duplicate_of, p.id) AS grp"
+            f"  SELECT p.id, {_GROUP.format('p')} AS grp"
             f"  FROM postings p JOIN rule_results r ON r.posting_id = p.id"
             f"  WHERE {_CURRENT} AND r.passed = 1"
             "), chosen AS ("
             "  SELECT COALESCE(MAX(CASE WHEN id = grp THEN id END), MIN(id)) AS id"
             "  FROM passed GROUP BY grp"
             ") SELECT p.* FROM chosen JOIN postings p ON p.id = chosen.id"
-            " WHERE :since IS NULL OR p.first_seen >= :since"
+            " WHERE (:since IS NULL OR p.first_seen >= :since)"
+            f" AND ({_UNDECIDED if undecided else '1'})"
             " ORDER BY p.first_seen DESC, p.id DESC LIMIT :limit",
             {
                 "profile": profile_hash,
@@ -402,6 +454,90 @@ class Store:
             },
         ).fetchall()
         return [self._stored(row) for row in rows]
+
+    def review_groups(self, profile_hash: str, rules_version: int) -> list[StoredPosting]:
+        """The passing groups, as in `passed_groups`, that have no decision on any member."""
+        return self._passed(profile_hash, rules_version, undecided=True)
+
+    def decide(self, posting_id: int, decision: Decision, now: datetime) -> bool:
+        """Store one decision for the group of this posting. False when it does not exist."""
+        with self._db:
+            known = self._db.execute("SELECT 1 FROM postings WHERE id = ?", (posting_id,))
+            if known.fetchone() is None:
+                return False
+            self._clear(posting_id)
+            self._db.execute(
+                "INSERT INTO decisions VALUES (?, ?, ?)",
+                (posting_id, decision.value, _to_text(now)),
+            )
+        return True
+
+    def undo(self, posting_id: int) -> None:
+        """Remove the decisions of the whole group of this posting."""
+        with self._db:
+            self._clear(posting_id)
+
+    def _clear(self, posting_id: int) -> None:
+        self._db.execute(
+            f"DELETE FROM decisions WHERE posting_id IN ({_MEMBERS})", {"id": posting_id}
+        )
+
+    def decided_groups(self, decision: Decision) -> list[tuple[StoredPosting, datetime]]:
+        """The decided posting of each group with this decision, newest decision first.
+
+        Rule results play no part, so a change of the profile removes nothing from the list.
+        Groups that were linked after each got a decision are listed once, with the newest.
+        """
+        rows = self._db.execute(
+            "WITH ranked AS ("
+            "  SELECT d.posting_id, d.decision, d.decided_at, ROW_NUMBER() OVER ("
+            f"    PARTITION BY {_GROUP.format('p')} ORDER BY d.decided_at DESC, d.posting_id DESC"
+            "  ) AS place FROM decisions d JOIN postings p ON p.id = d.posting_id"
+            ") SELECT p.*, ranked.decided_at"
+            " FROM ranked JOIN postings p ON p.id = ranked.posting_id"
+            " WHERE ranked.place = 1 AND ranked.decision = ?"
+            " ORDER BY ranked.decided_at DESC, p.id DESC",
+            (decision.value,),
+        ).fetchall()
+        return [(self._stored(row), datetime.fromisoformat(row["decided_at"])) for row in rows]
+
+    def run_summaries(self, limit: int) -> list[RunSummary]:
+        """The last runs, newest first."""
+        rows = self._db.execute(
+            "SELECT run_id, MIN(started_at) AS started_at, COUNT(*) AS sources,"
+            " SUM(error IS NOT NULL) AS not_collected, SUM(new) AS new"
+            " FROM run_log GROUP BY run_id ORDER BY started_at DESC, MAX(rowid) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            RunSummary(
+                run_id=row["run_id"],
+                started_at=datetime.fromisoformat(row["started_at"]),
+                sources=row["sources"],
+                not_collected=row["not_collected"],
+                new=row["new"],
+            )
+            for row in rows
+        ]
+
+    def run_failures(self, run_id: str) -> list[tuple[str, str, str]]:
+        """Source, target and error of each source that one run did not collect."""
+        rows = self._db.execute(
+            "SELECT source, target, error FROM run_log"
+            " WHERE run_id = ? AND error IS NOT NULL ORDER BY rowid",
+            (run_id,),
+        ).fetchall()
+        return [(row["source"], row["target"], row["error"]) for row in rows]
+
+    def version_mark(self) -> int:
+        """A number that changes when a posting is stored for the first time or with new text.
+
+        Cheap to read, so a caller can tell whether anything was collected since it last looked.
+        """
+        mark: int = self._db.execute(
+            "SELECT COALESCE(MAX(rowid), 0) FROM posting_versions"
+        ).fetchone()[0]
+        return mark
 
     def count(self) -> int:
         result: int = self._db.execute("SELECT COUNT(*) FROM postings").fetchone()[0]

@@ -1,15 +1,20 @@
 import io
 import os
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from rich.console import Console
 from support import TOKEN, Recorder, routes
 from typer.testing import CliRunner
@@ -17,7 +22,10 @@ from typer.testing import CliRunner
 from jobranker import cli
 from jobranker.cli import app
 from jobranker.models import Posting
+from jobranker.profile import load_profile
+from jobranker.rules import RULES_VERSION
 from jobranker.store import Store
+from jobranker.web.app import create_app
 
 runner = CliRunner()
 
@@ -490,3 +498,193 @@ def test_list_says_so_when_nothing_passed_or_nothing_is_recent(
     profile.write_text("places: [Nowhere]\n")
     run_command("rules", database, profile)
     assert run_command("list", database, profile) == ["No posting passed the rules."]
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+class Served:
+    """Stands in for the server and the browser, and keeps what the command gave them."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.apps: list[FastAPI] = []
+        self.bound: list[tuple[str, int]] = []
+        self.opened: list[str] = []
+        self.reachable: list[bool] = []
+        monkeypatch.setattr(cli, "serve", self._serve)
+        monkeypatch.setattr(cli, "open_browser", self._open)
+
+    def _serve(self, application: FastAPI, listener: socket.socket) -> None:
+        self.apps.append(application)
+        self.bound.append(listener.getsockname())
+
+    def _open(self, address: str) -> None:
+        self.opened.append(address)
+        url = httpx.URL(address)
+        assert url.port is not None
+        # The browser must find the port open, or it shows an error page.
+        try:
+            socket.create_connection((url.host, url.port), timeout=2).close()
+            self.reachable.append(True)
+        except OSError:
+            self.reachable.append(False)
+
+
+def dashboard(database: Path, profile: Path, port: int, *extra: str) -> list[str]:
+    return run_command("dashboard", database, profile, "--port", str(port), *extra)
+
+
+def test_dashboard_applies_the_rules_and_serves_on_this_machine_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served, port = Served(monkeypatch), free_port()
+    lines = dashboard(database, profile, port)
+    assert any(f"http://127.0.0.1:{port}" in line and "Ctrl+C" in line for line in lines)
+    assert served.bound == [("127.0.0.1", port)]
+    with Store(database) as store:
+        assert store.pending_rules(load_profile(profile).digest, RULES_VERSION) == []
+    client = TestClient(served.apps[0], base_url=f"http://127.0.0.1:{port}")
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "2 jobs to review" in page.text
+    assert "Junior Data Engineer" in page.text and "Barista" not in page.text
+    # The application checks the port it was started on.
+    assert TestClient(served.apps[0], base_url="http://127.0.0.1:1").get("/").status_code == 400
+
+
+def test_dashboard_opens_the_browser_when_the_port_is_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served, port = Served(monkeypatch), free_port()
+    dashboard(database, profile, port)
+    assert served.opened == [f"http://127.0.0.1:{port}"]
+    assert served.reachable == [True]
+
+
+def test_dashboard_with_no_open_leaves_the_browser_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served, port = Served(monkeypatch), free_port()
+    lines = dashboard(database, profile, port, "--no-open")
+    assert served.opened == []
+    assert len(served.apps) == 1
+    assert any(f"http://127.0.0.1:{port}" in line for line in lines)
+
+
+def test_dashboard_uses_port_8765_unless_told_otherwise() -> None:
+    result = runner.invoke(app, ["dashboard", "--help"])
+    output = ANSI_CODES.sub("", result.stdout)
+    assert "8765" in output and "--no-open" in output and "--port" in output
+
+
+def test_dashboard_stops_when_the_profile_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served = Served(monkeypatch)
+    profile.unlink()
+    result = runner.invoke(app, ["dashboard", "--db", str(database), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "config/profile.example.yaml" in result.output
+    assert "Traceback" not in result.output
+    assert served.apps == [] and served.opened == []
+
+
+def test_dashboard_stops_when_the_database_is_missing_and_does_not_create_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, profile = rules_setup(tmp_path, monkeypatch)
+    served = Served(monkeypatch)
+    missing = tmp_path / "typo" / "ranker.db"
+    result = runner.invoke(app, ["dashboard", "--db", str(missing), "--profile", str(profile)])
+    assert result.exit_code == 1
+    assert "jobrank collect" in result.output
+    assert not missing.parent.exists()
+    assert served.apps == [] and served.opened == []
+
+
+def test_dashboard_stops_when_the_port_is_taken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served = Served(monkeypatch)
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        result = runner.invoke(
+            app,
+            ["dashboard", "--db", str(database), "--profile", str(profile), "--port", str(port)],
+        )
+    assert result.exit_code == 1
+    assert "--port" in result.output and str(port) in result.output
+    assert "Traceback" not in result.output
+    assert len(result.output.splitlines()) == 1
+    assert served.apps == [] and served.opened == []
+
+
+@pytest.mark.parametrize("port", ["0", "-1", "80", "1023", "65536", "abc"])
+def test_dashboard_refuses_a_port_that_is_no_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: str
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    served = Served(monkeypatch)
+    result = runner.invoke(
+        app, ["dashboard", "--db", str(database), "--profile", str(profile), "--port", port]
+    )
+    assert result.exit_code == 2
+    assert served.apps == []
+
+
+def test_real_server_answers_on_the_given_socket_and_names_no_server_software(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    application = create_app(database, load_profile(profile), port=port)
+    server = cli.make_server(application)
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.started
+        with httpx.Client(trust_env=False, base_url=f"http://127.0.0.1:{port}") as client:
+            page = client.get("/")
+            assert page.status_code == 200
+            assert "jobs to review" in page.text
+            assert "server" not in page.headers
+            assert page.headers["x-frame-options"] == "DENY"
+            foreign = client.get("/", headers={"Host": "evil.test"})
+            assert foreign.status_code == 400
+            assert foreign.headers["x-content-type-options"] == "nosniff"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+    assert not thread.is_alive()
+
+
+def test_dashboard_stopped_with_ctrl_c_ends_without_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    Served(monkeypatch)
+
+    def interrupted(application: FastAPI, listener: socket.socket) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "serve", interrupted)
+    lines = dashboard(database, profile, free_port(), "--no-open")
+    assert lines[-1] == "Dashboard stopped."
+    assert not any("Aborted" in line for line in lines)
