@@ -21,6 +21,10 @@ REQUEST_TIMEOUT_SECONDS = 320.0
 # Upper bound used for the cost cap, above the default actor's price per result.
 MAX_USD_PER_RESULT = 0.002
 _RUN_START_ALLOWANCE_USD = 0.01
+# The cap is worked out in whole thousandths of a dollar, so no float error can lower it.
+_THOUSANDTHS_PER_RESULT = round(MAX_USD_PER_RESULT * 1000)
+_RUN_START_THOUSANDTHS = round(_RUN_START_ALLOWANCE_USD * 1000)
+_THOUSANDTHS_PER_CENT = 10
 _DATE_POSTED = {"day": "r86400", "week": "r604800", "month": "r2592000"}
 
 __all__ = ["DEFAULT_ACTOR", "FetchResult", "cost_cap", "fetch"]
@@ -28,7 +32,10 @@ __all__ = ["DEFAULT_ACTOR", "FetchResult", "cost_cap", "fetch"]
 
 def cost_cap(limit: int) -> float:
     """The most one request may cost. Apify stops charging at this amount."""
-    return round(limit * MAX_USD_PER_RESULT + _RUN_START_ALLOWANCE_USD, 2)
+    thousandths = limit * _THOUSANDTHS_PER_RESULT + _RUN_START_THOUSANDTHS
+    # Rounded up to a whole cent, so the cap is never below the computed bound.
+    cents = -(-thousandths // _THOUSANDTHS_PER_CENT)
+    return cents / 100
 
 
 def _to_posting(item: dict[str, Any]) -> Posting | None:

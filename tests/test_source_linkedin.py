@@ -30,10 +30,12 @@ def test_request_address_body_and_cost_cap() -> None:
     }
 
 
-def test_cost_cap_follows_the_limit() -> None:
-    assert linkedin.cost_cap(50) == 0.11
-    assert linkedin.cost_cap(200) == 0.41
-    assert linkedin.cost_cap(1) == 0.01
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [(1, 0.02), (2, 0.02), (5, 0.02), (6, 0.03), (50, 0.11), (200, 0.41)],
+)
+def test_cost_cap_follows_the_limit_and_rounds_up(limit: int, expected: float) -> None:
+    assert linkedin.cost_cap(limit) == expected
 
 
 def test_token_is_in_header_not_in_address() -> None:
