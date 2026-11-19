@@ -60,7 +60,7 @@ def test_accepted_place_anywhere_in_the_location_passes(location: str) -> None:
     assert check(posting(location=location), PROFILE) == ()
 
 
-@pytest.mark.parametrize("location", ["Madrid", "Lisbonne", "Portobello, UK", "Remote"])
+@pytest.mark.parametrize("location", ["Madrid", "Lisbonne", "Portobello, UK", "Anywhere"])
 def test_other_place_is_dropped(location: str) -> None:
     assert check(posting(location=location), PROFILE) == (Reason.PLACE,)
 
@@ -71,7 +71,11 @@ def test_other_place_is_dropped(location: str) -> None:
         ("Remote - Europe", Remote.YES, True),
         ("Remote, Portugal", Remote.YES, True),
         ("Remote - United States", Remote.YES, False),
-        ("Remote", Remote.YES, False),
+        # A location that names no place is not a certain mismatch.
+        ("Remote", Remote.YES, True),
+        ("Remote", Remote.UNKNOWN, True),
+        ("REMOTE (remote)", Remote.NO, True),
+        ("Remote - Asia", Remote.YES, False),
         # The word in the location marks a posting as remote when the field does not.
         ("Remote - Europe", Remote.UNKNOWN, True),
         ("Remote Portugal", Remote.UNKNOWN, True),
@@ -215,3 +219,31 @@ def test_reason_codes_are_fixed_words() -> None:
 def test_language_rule_reads_a_list_of_languages(title: str, passes: bool) -> None:
     result = check(posting(title=title), PROFILE)
     assert result == (() if passes else (Reason.LANGUAGE,))
+
+
+@pytest.mark.parametrize(
+    ("title", "passes"),
+    [
+        # The German joined form can end a list as well.
+        ("Englisch- oder deutschsprachiger Support Engineer", True),
+        ("Deutsch-/Englischsprachiger Support Engineer", True),
+        ("Deutsch- oder niederländischsprachiger Support Engineer", False),
+        ("Englisch- und deutschsprachiger Support Engineer", False),
+        # The speaker word can be repeated for each language.
+        ("Support Engineer (English speaking or German speaking)", True),
+        ("Support Engineer, English Speaker / German Speaker", True),
+        ("Support Engineer (Dutch speaking or German speaking)", False),
+        ("Support Engineer, English speaking and German speaking", False),
+        # A title that says a language is not needed asks for nothing.
+        ("Support Engineer, non-German speaking welcome", True),
+        ("Support Engineer (kein deutschsprachiger Kundenkontakt)", True),
+    ],
+)
+def test_language_rule_reads_joined_and_repeated_forms(title: str, passes: bool) -> None:
+    result = check(posting(title=title), PROFILE)
+    assert result == (() if passes else (Reason.LANGUAGE,))
+
+
+def test_language_rule_is_off_when_the_profile_lists_no_language() -> None:
+    profile = with_profile(languages=[])
+    assert check(posting(title="Support Engineer - Dutch Speaking"), profile) == ()

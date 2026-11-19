@@ -61,6 +61,8 @@ _JOINED_FORM = "sprachig"
 # Between two language names: a choice of languages, or a need for both.
 _CHOICE_WORDS = frozenset({"or", "oder"})
 _BOTH_WORDS = frozenset({"and", "und"})
+# Before a request: the language is not needed, as in `non-German speaking`.
+_NEGATIONS = frozenset({"non", "not", "no", "kein", "keine", "nicht"})
 _REMOTE_WORD = "remote"
 
 
@@ -76,42 +78,64 @@ def _place(posting: Posting, profile: Profile, location: Sequence[str]) -> bool:
     remote = posting.remote is Remote.YES or _REMOTE_WORD in location
     if not profile.remote.accept or not remote:
         return False
-    return not profile.remote.places or _holds_any(location, profile.remote.places)
+    # A location that names no place, such as a bare `Remote`, is not a certain mismatch.
+    named = [word for word in location if word != _REMOTE_WORD]
+    return not profile.remote.places or not named or _holds_any(location, profile.remote.places)
 
 
 def _level(profile: Profile, title: Sequence[str]) -> bool:
     return not _holds_any(title, profile.levels.reject) or _holds_any(title, profile.levels.accept)
 
 
-def _speaker_request(title: Sequence[str], speaker: int) -> tuple[list[str], bool]:
-    """The languages listed before the speaker word at `speaker`, and whether all are needed.
+def _language_of(word: str) -> tuple[str | None, bool]:
+    """The language a word names, and whether the word also says a speaker is wanted."""
+    if word in _LANGUAGE_KEY:
+        return _LANGUAGE_KEY[word], False
+    name, joined, _ = word.partition(_JOINED_FORM)
+    if joined and name in _LANGUAGE_KEY:
+        return _LANGUAGE_KEY[name], True
+    return None, False
 
-    `Dutch or English speaking` and `Dutch/English speaking` offer a choice.
-    `Dutch and English speaking` needs both.
+
+def _requests(title: Sequence[str]) -> list[tuple[list[str], bool]]:
+    """Each request for a speaker in a title: the languages, and whether all are needed.
+
+    A request is a run of language names, speaker words and joining words, as in
+    `Dutch or English speaking`, `English speaker / German speaker` and
+    `englisch- oder deutschsprachig`. Several languages are a choice unless `and` joins them.
+    A run without a speaker word is no request, and neither is one after a negation.
     """
-    asked: list[str] = []
-    every = False
-    for word in reversed(title[:speaker]):
-        if word in _LANGUAGE_KEY:
-            asked.append(_LANGUAGE_KEY[word])
-        elif asked and word in _BOTH_WORDS:
+    found: list[tuple[list[str], bool]] = []
+    languages: list[str] = []
+    wanted = every = negated = False
+    previous = ""
+    for word in [*title, ""]:
+        language, joined = _language_of(word)
+        if language is not None or word in _SPEAKER_WORDS:
+            if not languages and not wanted:
+                negated = previous in _NEGATIONS
+            wanted = wanted or joined or word in _SPEAKER_WORDS
+            if language is not None:
+                languages.append(language)
+        elif languages and word in _BOTH_WORDS:
             every = True
-        elif not (asked and word in _CHOICE_WORDS):
-            break
-    return asked, every
+        elif not (languages and word in _CHOICE_WORDS):
+            if languages and wanted and not negated:
+                found.append((languages, every))
+            languages, wanted, every, negated = [], False, False, False
+        previous = word
+    return found
 
 
 def _language(profile: Profile, title: Sequence[str]) -> bool:
+    # A profile that lists no language switches the rule off, like an empty list elsewhere.
+    if not profile.languages:
+        return True
     known = {_LANGUAGE_KEY.get(normalise(name), normalise(name)) for name in profile.languages}
-    for index, word in enumerate(title):
-        name, joined, _ = word.partition(_JOINED_FORM)
-        if joined and name in _LANGUAGE_KEY and _LANGUAGE_KEY[name] not in known:
+    for languages, every in _requests(title):
+        fits = all if every else any
+        if not fits(language in known for language in languages):
             return False
-        if word in _SPEAKER_WORDS:
-            asked, every = _speaker_request(title, index)
-            fits = all if every else any
-            if asked and not fits(language in known for language in asked):
-                return False
     return True
 
 
