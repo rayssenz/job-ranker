@@ -15,7 +15,8 @@ from jobranker.collect import DEFAULT_MAX_RESULTS, collect, utc_now
 from jobranker.config import ConfigError, load_companies, load_searches, read_token
 from jobranker.display import RunDisplay, summary
 from jobranker.profile import Profile, ProfileError, load_profile
-from jobranker.rules import RULES_VERSION, Reason, check
+from jobranker.rules import RULES_VERSION, Reason
+from jobranker.screening import apply_rules
 from jobranker.sources import linkedin
 from jobranker.store import Store, StoreError
 
@@ -159,11 +160,9 @@ def rules_command(
     """Drop the stored postings that cannot fit the profile. Sends no request."""
     loaded, store = _open(profile, db)
     with store:
-        pending = store.pending_rules(loaded.digest, RULES_VERSION)
-        results = ((stored, check(stored.posting, loaded)) for stored in pending)
-        store.save_rule_results(results, loaded.digest, RULES_VERSION, utc_now())
+        checked = apply_rules(store, loaded, utc_now())
         counts = store.rule_counts(loaded.digest, RULES_VERSION)
-    typer.echo(f"checked {len(pending)}")
+    typer.echo(f"checked {checked}")
     for reason in Reason:
         typer.echo(f"{reason.value}: {counts.get(reason.value, 0)}")
     typer.echo(f"passed {counts['passed']} postings in {counts['groups']} groups")
