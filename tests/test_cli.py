@@ -207,3 +207,19 @@ def test_database_path_that_is_a_folder_gives_a_short_message(
 
 def test_tracebacks_never_show_local_variables() -> None:
     assert app.pretty_exceptions_show_locals is False
+
+
+def test_unreadable_env_file_gives_a_short_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = routes()
+    use_routes(monkeypatch, recorder)
+    env_file = tmp_path / "bad.env"
+    env_file.write_bytes(b"# caf\xe9\nAPIFY_TOKEN=abc\n")
+    args = collect_args(tmp_path)
+    args[args.index("--env-file") + 1] = str(env_file)
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "bad.env" in result.output
+    assert "Traceback" not in result.output
+    assert recorder.requests == []

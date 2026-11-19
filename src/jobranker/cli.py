@@ -80,6 +80,7 @@ def collect_command(
     try:
         company_list = load_companies(companies)
         search_list = load_searches(searches)
+        token = read_token(os.environ, env_file)
     except ConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
@@ -87,7 +88,6 @@ def collect_command(
         typer.echo(NO_CONFIGURATION, err=True)
         raise typer.Exit(1)
 
-    token = read_token(os.environ, env_file)
     try:
         store = Store(db)
     except StoreError as error:

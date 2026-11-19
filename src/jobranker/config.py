@@ -3,14 +3,28 @@
 import re
 from collections.abc import Hashable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 TOKEN_VARIABLE = "APIFY_TOKEN"
 # In an unquoted value a comment starts at a # that follows white space or starts the value.
 _INLINE_COMMENT = re.compile(r"(?:^|\s)#")
+
+# Text with the spaces around it removed and at least one character left.
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# A board token is one part of an address, so it has no space and no address mark.
+BoardToken = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, pattern=r"^[^\s/?#]+$")
+]
 
 
 class ConfigError(Exception):
@@ -20,9 +34,9 @@ class ConfigError(Exception):
 class Company(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str = Field(min_length=1)
+    name: Text
     feed: Literal["greenhouse", "lever", "ashby"]
-    token: str = Field(min_length=1)
+    token: BoardToken
     region: Literal["global", "eu"] = "global"
 
     @model_validator(mode="after")
@@ -35,17 +49,20 @@ class Company(BaseModel):
 class Search(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    keywords: str = Field(min_length=1)
-    location: str = Field(min_length=1)
+    keywords: Text
+    location: Text
     posted_within: Literal["day", "week", "month"] = "day"
-    limit: int = Field(default=50, ge=1, le=500)
+    # Strict, so that YAML's true is not read as the number 1.
+    limit: int = Field(default=50, ge=1, le=500, strict=True)
 
 
 def _entries(path: Path, key: str) -> list[Any]:
     if not path.exists():
         return []
     try:
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(f"{path}: cannot be read ({type(error).__name__})") from None
     except yaml.YAMLError as error:
         raise ConfigError(f"{path}: not valid YAML ({type(error).__name__})") from error
     if data is None:
@@ -90,7 +107,7 @@ def load_companies(path: Path) -> list[Company]:
             company = Company.model_validate(entry)
         except ValidationError as error:
             raise ConfigError(f"{where}: {_problems(error)}") from error
-        _reject_duplicate(seen, (company.feed, company.token, company.region), where)
+        _reject_duplicate(seen, (company.feed, company.token.lower(), company.region), where)
         companies.append(company)
     return companies
 
@@ -121,7 +138,11 @@ def read_token(environ: Mapping[str, str], env_file: Path) -> str | None:
     if not env_file.is_file():
         return None
     # utf-8-sig also reads a file that starts with a byte order mark.
-    for line in env_file.read_text(encoding="utf-8-sig").splitlines():
+    try:
+        lines = env_file.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(f"{env_file}: cannot be read ({type(error).__name__})") from None
+    for line in lines:
         name, separator, raw = line.strip().removeprefix("export ").partition("=")
         if separator and name.strip() == TOKEN_VARIABLE:
             value = _env_value(raw)
@@ -133,7 +154,16 @@ def read_token(environ: Mapping[str, str], env_file: Path) -> str | None:
 
 def _env_value(raw: str) -> str:
     raw = raw.strip()
-    if raw[:1] in ("'", '"'):
+    if raw[:1] == '"':
+        # Inside double quotes a backslash keeps the next character, so \\" is a quote mark.
+        value: list[str] = []
+        characters = iter(raw[1:])
+        for character in characters:
+            if character == '"':
+                break
+            value.append(next(characters, "") if character == "\\" else character)
+        return "".join(value).strip()
+    if raw[:1] == "'":
         # A quoted value ends at the closing quote, so a # inside the quotes is kept.
-        return raw[1:].partition(raw[0])[0].strip()
+        return raw[1:].partition("'")[0].strip()
     return _INLINE_COMMENT.split(raw, maxsplit=1)[0].strip()

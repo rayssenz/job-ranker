@@ -198,3 +198,87 @@ def test_empty_token_is_absent(tmp_path: Path) -> None:
     env_file = write(tmp_path / ".env", "APIFY_TOKEN=\n")
     assert read_token({"APIFY_TOKEN": ""}, env_file) is None
     assert read_token({}, tmp_path / "missing.env") is None
+
+
+def test_folder_as_config_file_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as error:
+        load_companies(tmp_path)
+    assert str(tmp_path) in str(error.value)
+
+
+def test_config_file_in_another_encoding_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "c.yaml"
+    path.write_bytes(b"companies:\n  - name: Caf\xe9\n    feed: lever\n    token: cafe\n")
+    with pytest.raises(ConfigError) as error:
+        load_companies(path)
+    assert "c.yaml" in str(error.value)
+
+
+def test_config_file_is_read_as_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "c.yaml"
+    path.write_bytes("companies:\n  - name: Café Nord\n    feed: lever\n    token: cafe\n".encode())
+    assert load_companies(path)[0].name == "Café Nord"
+
+
+def test_env_file_in_another_encoding_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_bytes(b"# caf\xe9\nAPIFY_TOKEN=abc\n")
+    with pytest.raises(ConfigError) as error:
+        read_token({}, path)
+    assert ".env" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        'name: "  "\n    feed: lever\n    token: acme',
+        'name: Acme Test\n    feed: lever\n    token: "  "',
+        'name: Acme Test\n    feed: lever\n    token: "a b"',
+        'name: Acme Test\n    feed: lever\n    token: "a/../b"',
+    ],
+)
+def test_blank_name_and_malformed_token_are_rejected(tmp_path: Path, entry: str) -> None:
+    path = write(tmp_path / "c.yaml", f"companies:\n  - {entry}\n")
+    with pytest.raises(ConfigError):
+        load_companies(path)
+
+
+def test_padded_values_are_trimmed(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        'companies:\n  - name: " Acme Test "\n    feed: lever\n    token: " acme "\n',
+    )
+    company = load_companies(path)[0]
+    assert (company.name, company.token) == ("Acme Test", "acme")
+
+
+def test_same_board_in_another_letter_case_is_a_duplicate(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n"
+        "  - name: Acme Test\n    feed: lever\n    token: acme\n"
+        "  - name: Acme Again\n    feed: lever\n    token: ACME\n",
+    )
+    with pytest.raises(ConfigError, match="duplicate"):
+        load_companies(path)
+
+
+def test_search_limit_must_be_a_number(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "s.yaml",
+        "searches:\n  - keywords: data engineer\n    location: Lisbon\n    limit: true\n",
+    )
+    with pytest.raises(ConfigError):
+        load_searches(path)
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ('APIFY_TOKEN="a\\"b"', 'a"b'),
+        ('APIFY_TOKEN="a\\\\b" # note', "a\\b"),
+        ("APIFY_TOKEN='a\\b'", "a\\b"),
+    ],
+)
+def test_escapes_in_a_quoted_token(tmp_path: Path, line: str, expected: str) -> None:
+    assert read_token({}, write(tmp_path / ".env", line + "\n")) == expected
