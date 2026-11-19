@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from importlib.metadata import version
@@ -9,6 +10,8 @@ from jobranker.cli import app
 
 runner = CliRunner()
 
+ANSI_CODES = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def test_version_flag_prints_package_version() -> None:
     result = runner.invoke(app, ["--version"])
@@ -19,9 +22,10 @@ def test_version_flag_prints_package_version() -> None:
 def test_no_arguments_prints_help_and_exits_zero() -> None:
     result = runner.invoke(app, [])
     assert result.exit_code == 0
-    assert "Usage" in result.stdout
-    assert "Collect job postings" in result.stdout
-    assert "--version" in result.stdout
+    output = ANSI_CODES.sub("", result.stdout)
+    assert "Usage" in output
+    assert "Collect job postings" in output
+    assert "--version" in output
 
 
 def test_installed_jobrank_command_prints_version() -> None:
