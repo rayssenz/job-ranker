@@ -703,7 +703,7 @@ def test_stylesheet_defines_the_colours_of_the_spec(db: Path) -> None:
 
 
 def test_accent_is_used_only_where_the_spec_allows(db: Path) -> None:
-    allowed = (".go", ".badge", ".sticker", ".stamp", ".star")
+    allowed = (".go", ".badge", ".sticker", ".stamp")
     users = [selector for selector, body in rules(stylesheet(db)) if "var(--accent)" in body]
     assert users
     for selector in users:
@@ -791,4 +791,28 @@ def test_long_words_of_a_posting_cannot_widen_the_page(db: Path) -> None:
     found = dict(rules(stylesheet(db)))
     for selector in (".card-title", ".meta", ".excerpt", ".full-text"):
         assert "overflow-wrap: anywhere" in found[selector]
-    assert "overflow-x: clip" in found["body"]
+    # Only the list is clipped, so a card can leave to the side. The page itself can
+    # still scroll sideways, and a wide table scrolls inside its own sheet.
+    assert "overflow" not in found["body"]
+    assert "overflow-x: clip" in found["main"]
+    assert "overflow-x: auto" in found[".sheet"]
+
+
+@pytest.mark.parametrize("selector", [".button::after", ".tab::after", ".card::after"])
+def test_control_that_moves_keeps_a_hit_area_under_the_pointer(db: Path, selector: str) -> None:
+    # A control that lifts on hover or sinks on press must not slide out from under the pointer.
+    body = dict(rules(stylesheet(db)))[selector]
+    assert "position: absolute" in body
+    assert re.search(r"inset: [^;]*-\d+px", body)
+    assert 'content: ""' in body
+
+
+def test_focus_ring_is_visible_on_the_run_line(db: Path) -> None:
+    found = dict(rules(stylesheet(db)))
+    assert "var(--brand)" in found[":focus-visible"] and "var(--brand)" in found[".health"]
+    assert "outline-color: #fff" in found[".health :focus-visible"]
+
+
+def test_badge_keeps_wobbling_after_it_jumped(db: Path) -> None:
+    body = dict(rules(stylesheet(db)))[".badge.bump"]
+    assert "bump" in body and "wiggle" in body and "infinite" in body

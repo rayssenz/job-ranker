@@ -546,3 +546,12 @@ def test_script_respects_a_request_for_less_motion_and_stays_plain(db: Path) -> 
         'setAttribute("style"',
     ):
         assert forbidden not in script
+
+
+def test_script_guards_against_overlapping_decisions(db: Path) -> None:
+    script = site(db).get("/static/dashboard.js").text
+    # Two decisions on their way at once: neither answer alone shows the final page.
+    assert "overlapped" in script and "window.location.href" in script
+    assert "isConnected" in script
+    # The request is built inside the guarded part, so a failure falls back to the plain form.
+    assert script.index("try {") < script.index("new FormData(form, button)")

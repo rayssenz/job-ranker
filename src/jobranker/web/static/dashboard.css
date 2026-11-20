@@ -41,8 +41,6 @@ body {
   font-family: var(--body);
   font-size: 16px;
   line-height: 1.45;
-  /* A card that leaves to the side must not give the page a sideways scroll. */
-  overflow-x: clip;
 }
 
 a {
@@ -103,7 +101,9 @@ h1 {
 }
 
 .badge.bump {
-  animation: bump 0.5s var(--spring);
+  animation:
+    bump 0.5s var(--spring),
+    wiggle 2.8s ease-in-out 0.5s infinite;
 }
 
 .sub {
@@ -118,7 +118,19 @@ h1 {
   margin-left: auto;
 }
 
+/* A control that lifts on hover or sinks on press keeps an unseen margin, so it does
+   not slide out from under the pointer and miss the click. The margin is measured from
+   inside the outline, so each value also has to cover the width of the outline. */
+.tab::after {
+  content: "";
+  position: absolute;
+  inset: -4px -7px -8px -4px;
+  z-index: -1;
+}
+
 .tab {
+  position: relative;
+  isolation: isolate;
   padding: 6px 16px;
   border: var(--line);
   border-radius: 99px;
@@ -149,8 +161,12 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+/* The list spans the window, so a card that leaves to the side is cut at the window
+   edge and gives the page no sideways scroll. Only this part is clipped. */
 main {
-  padding-bottom: 70px;
+  max-width: none;
+  padding: 0 max(34px, calc((100% - 872px) / 2)) 70px;
+  overflow-x: clip;
 }
 
 .health {
@@ -167,6 +183,10 @@ main {
 .failed {
   color: var(--warn);
   font-weight: 700;
+}
+
+.health :focus-visible {
+  outline-color: #fff;
 }
 
 .health .failed {
@@ -217,7 +237,16 @@ main {
   font: inherit;
 }
 
+.button::after {
+  content: "";
+  position: absolute;
+  inset: -5px -11px -16px -5px;
+  z-index: -1;
+}
+
 .button {
+  position: relative;
+  isolation: isolate;
   display: inline-block;
   min-width: 140px;
   padding: 9px 18px;
@@ -267,8 +296,18 @@ main {
   gap: 26px;
 }
 
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0 -9px -11px 0;
+  z-index: -1;
+}
+
+/* The card tilts around the side that holds its buttons, so they stay under the pointer. */
 .card {
   position: relative;
+  isolation: isolate;
+  transform-origin: 100% 50%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px 22px;
@@ -411,7 +450,7 @@ main {
   flex-direction: column;
   grid-column: 2;
   grid-row: 1 / span 4;
-  gap: 10px;
+  gap: 16px;
   justify-content: center;
 }
 
@@ -482,7 +521,7 @@ main {
 }
 
 .star:nth-child(3n) {
-  color: var(--accent);
+  color: var(--fresh);
 }
 
 .star:nth-child(3n + 1) {
@@ -510,6 +549,7 @@ main {
 
 .sheet {
   margin-bottom: 26px;
+  overflow-x: auto;
   padding: 20px 24px;
   border: 3.5px solid var(--ink);
   border-radius: 24px;
@@ -701,6 +741,12 @@ main {
 
   .button {
     min-width: 0;
+  }
+
+  /* The buttons sit in a row under the text here, so the card lifts without a tilt. */
+  .card:hover,
+  .card:nth-child(even):hover {
+    transform: translate(-4px, -6px);
   }
 
   .eyes {
