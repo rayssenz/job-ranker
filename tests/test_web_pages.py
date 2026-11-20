@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from jobranker.models import Posting
+from jobranker.judge.prompt import PROMPT_VERSION
+from jobranker.models import Posting, Verdict
 from jobranker.profile import Levels, Profile
 from jobranker.rules import RULES_VERSION
 from jobranker.screening import apply_rules
@@ -816,3 +817,190 @@ def test_focus_ring_is_visible_on_the_run_line(db: Path) -> None:
 def test_badge_keeps_wobbling_after_it_jumped(db: Path) -> None:
     body = dict(rules(stylesheet(db)))[".badge.bump"]
     assert "bump" in body and "wiggle" in body and "infinite" in body
+
+
+JUDGING = Profile(
+    places=["Lisbon", "Porto"],
+    levels=Levels(accept=["working student", "junior"]),
+    skills=["Python"],
+)
+
+
+def judge(
+    db: Path,
+    item: Posting,
+    decision: str = "yes",
+    *,
+    reasons: tuple[str, ...] = ("Asks for Python, which is in the profile.",),
+    missing: tuple[str, ...] = (),
+    profile: Profile = JUDGING,
+    model: str = "model-a",
+) -> None:
+    verdict = Verdict(
+        decision=decision,  # type: ignore[arg-type]
+        reasons=reasons,
+        matched=(),
+        missing=missing,
+        cut=False,
+        model=model,
+        input_tokens=0,
+        output_tokens=0,
+        duration_ms=0,
+        cost_usd=0.0,
+    )
+    with Store(db) as store:
+        stored = store.get(item.source, item.board, item.posting_id)
+        assert stored is not None
+        store.save_verdict(stored, verdict, profile.judge_digest, PROMPT_VERSION, NOW)
+
+
+def card_of(html: str, title: str) -> str:
+    cards = re.findall(r"<article.*?</article>", html, re.S)
+    found = [card for card in cards if f'<h2 class="card-title">{title}</h2>' in card]
+    assert len(found) == 1
+    card: str = found[0]
+    return card
+
+
+def verdict_postings(db: Path) -> tuple[Posting, Posting, Posting]:
+    fits, not_fit, unjudged = posting(1), posting(2), posting(3)
+    add(db, fits, seen=NOW - timedelta(days=4))
+    add(db, not_fit, seen=NOW - timedelta(days=3))
+    add(db, unjudged, seen=NOW - timedelta(days=2))
+    judge(db, fits, reasons=("Asks for Python.", "Junior level."))
+    judge(db, not_fit, "no", reasons=("Needs five years of Rust.",), missing=("Rust",))
+    return fits, not_fit, unjudged
+
+
+def test_judged_card_shows_its_mark_and_reasons_and_the_others_say_not_judged(db: Path) -> None:
+    verdict_postings(db)
+    html = page(db, profile=JUDGING)
+    assert titles(html) == ["Role 3", "Role 2", "Role 1"]
+    yes, no, none = (card_of(html, f"Role {n}") for n in (1, 2, 3))
+    assert '<p class="verdict yes">Fits</p>' in yes
+    assert re.findall(r"<li>(.*?)</li>", yes) == ["Asks for Python.", "Junior level."]
+    assert '<p class="verdict no">Does not fit</p>' in no
+    assert "Needs five years of Rust." in no
+    assert "Not judged yet" in none
+    assert "verdict yes" not in none and "<li>" not in none
+    assert "Not judged yet" not in yes and "Not judged yet" not in no
+
+
+def test_verdict_of_any_model_is_shown(db: Path) -> None:
+    add(db, posting(1))
+    judge(db, posting(1), model="model-b")
+    assert '<p class="verdict yes">Fits</p>' in page(db, profile=JUDGING)
+
+
+def test_stale_verdict_is_shown_as_not_judged(db: Path) -> None:
+    add(db, posting(1))
+    judge(db, posting(1))
+    other = JUDGING.model_copy(update={"skills": ["Python", "SQL"]})
+    html = page(db, profile=other)
+    assert "Not judged yet" in html
+    assert "verdict yes" not in html
+    # A change of the posting text has the same effect.
+    add(db, posting(1, description="Build other models."))
+    assert "Not judged yet" in page(db, profile=JUDGING)
+
+
+def test_only_yes_is_off_when_the_dashboard_opens_and_a_no_is_still_shown(db: Path) -> None:
+    verdict_postings(db)
+    for path in ("/", "/?yes=0", "/?yes=true", "/?yes="):
+        html = page(db, path, profile=JUDGING)
+        assert len(titles(html)) == 3
+        assert re.search(r'<input[^>]*name="yes"[^>]*>', html)
+        assert not re.search(r'<input[^>]*name="yes"[^>]*checked', html)
+
+
+def test_only_yes_keeps_the_yes_cards_with_the_fewest_missing_first(db: Path) -> None:
+    two, none, one, no = posting(1), posting(2), posting(3), posting(4)
+    for days, item in enumerate((no, one, none, two), start=1):
+        add(db, item, seen=NOW - timedelta(days=days))
+    newest_without_missing = posting(5)
+    add(db, newest_without_missing, seen=NOW - timedelta(hours=30))
+    add(db, posting(6), seen=NOW - timedelta(hours=40))
+    judge(db, two, missing=("Airflow", "Docker"))
+    judge(db, none)
+    judge(db, one, missing=("Airflow",))
+    judge(db, no, "no")
+    judge(db, newest_without_missing)
+    html = page(db, "/?yes=1", profile=JUDGING)
+    assert titles(html) == ["Role 5", "Role 2", "Role 3", "Role 1"]
+    assert re.search(r'<input[^>]*name="yes"[^>]*checked', html)
+    assert counts(html)["/"] == 6
+    assert "Showing 4 of 6" in html
+
+
+def test_only_yes_combines_with_the_other_switch_and_the_search(db: Path) -> None:
+    entry_level_postings(db)
+    judge(db, posting(2, title="Junior Data Engineer"))
+    judge(db, posting(1, title="Data Engineer"))
+    judge(db, posting(3, title="Working Student ML", location="Porto"), "no")
+    assert titles(page(db, "/?yes=1&entry=1", profile=JUDGING)) == ["Junior Data Engineer"]
+    assert titles(page(db, "/?yes=1&q=data", profile=JUDGING)) == [
+        "Junior Data Engineer",
+        "Data Engineer",
+    ]
+
+
+def test_only_yes_without_a_yes_says_what_to_do(db: Path) -> None:
+    add(db, posting(1))
+    html = page(db, "/?yes=1", profile=JUDGING)
+    assert titles(html) == []
+    assert "No job has a yes. Run `jobrank judge` in the terminal, or turn the switch off." in html
+
+
+def test_page_links_and_decision_forms_keep_only_yes(db: Path) -> None:
+    many(db, 60)
+    for number in range(60):
+        judge(db, posting(number))
+    html = page(db, "/?yes=1", profile=JUDGING)
+    assert len(titles(html)) == 50
+    assert 'href="/?yes=1&amp;page=2"' in html
+    assert 'name="yes" value="1"' in card_of(html, titles(html)[0])
+    assert 'type="hidden" name="yes"' not in page(db, profile=JUDGING)
+
+
+@pytest.mark.parametrize("path", ["/applied", "/dismissed"])
+def test_decided_tabs_show_the_verdict_too(db: Path, path: str) -> None:
+    fits, _, unjudged = verdict_postings(db)
+    decision = Decision.APPLIED if path == "/applied" else Decision.DISMISSED
+    decide(db, fits, decision)
+    decide(db, unjudged, decision)
+    html = page(db, path, profile=JUDGING)
+    assert '<p class="verdict yes">Fits</p>' in card_of(html, "Role 1")
+    assert "Not judged yet" in card_of(html, "Role 3")
+
+
+def test_markup_in_a_reason_is_shown_as_text(db: Path) -> None:
+    add(db, posting(1))
+    judge(
+        db,
+        posting(1),
+        reasons=("<script>alert(1)</script> fits", "{{ 7*7 }} <img src=x onerror=alert(2)>"),
+    )
+    html = page(db, profile=JUDGING)
+    assert "<script>alert" not in html and "<img" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; fits" in html
+    assert "{{ 7*7 }} &lt;img src=x onerror=alert(2)&gt;" in html
+    assert "49" not in card_of(html, "Role 1")
+
+
+def test_a_page_request_with_verdicts_stores_nothing(db: Path) -> None:
+    verdict_postings(db)
+    with Store(db) as store:
+        before = store.dump()
+    for path in (*PAGES, "/?yes=1"):
+        page(db, path, profile=JUDGING)
+    with Store(db) as store:
+        assert store.dump() == before
+
+
+def test_verdict_marks_use_tested_colours_and_never_the_accent(db: Path) -> None:
+    found = dict(rules(stylesheet(db)))
+    assert "background: var(--brand)" in found[".verdict.yes"]
+    assert "color: #fff" in found[".verdict.yes"]
+    assert "background: var(--base)" in found[".verdict.no"]
+    assert "var(--accent)" not in found[".verdict.yes"] + found[".verdict.no"] + found[".verdict"]
+    assert "overflow-wrap: anywhere" in found[".reasons"]

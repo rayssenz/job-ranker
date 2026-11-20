@@ -393,6 +393,9 @@ def test_request_without_a_host_is_refused(db: Path) -> None:
             "/?entry=1&q=junior+role&page=2",
         ),
         ({"tab": "review", "entry": "yes", "q": "  ", "page": "abc"}, "/"),
+        ({"tab": "review", "yes": "1", "entry": "1", "page": "2"}, "/?entry=1&yes=1&page=2"),
+        ({"tab": "review", "yes": "https://evil.test"}, "/"),
+        ({"tab": "dismissed", "yes": "1"}, "/dismissed"),
         ({"tab": "applied", "entry": "1", "q": "x", "page": "3"}, "/applied"),
         (
             {"tab": "review", "q": "https://evil.test/?a=b&c=d#e"},
