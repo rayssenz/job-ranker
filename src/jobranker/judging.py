@@ -58,6 +58,8 @@ def run(
             stopped = SPEND_LIMIT if limit_reached.spend else PLAN_LIMIT
             break
         except JudgeFailure as failure:
+            # Remembered, so this posting waits behind the others on the next run.
+            store.record_failure(stored, now())
             failed += 1
             in_a_row += 1
             report(stored, failure)

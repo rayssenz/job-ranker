@@ -177,3 +177,16 @@ def test_verdict_is_stored_before_the_next_call(store: Store) -> None:
 
     run(store, Checking())
     assert len(verdicts(store)) == 5
+
+
+def test_postings_that_keep_failing_do_not_block_the_ones_behind_them(store: Store) -> None:
+    failure = JudgeFailure("no answer")
+    stuck = {"Role 5": failure, "Role 4": failure, "Role 3": failure}
+    first = FakeJudge(stuck)
+    assert run(store, first)[0].stopped == "failures"
+    assert titles(first) == ["Role 5", "Role 4", "Role 3"]
+    second = FakeJudge(stuck)
+    tally, _ = run(store, second)
+    assert titles(second) == ["Role 2", "Role 1", "Role 5", "Role 4", "Role 3"]
+    assert (tally.yes, tally.failed, tally.waiting) == (2, 3, 3)
+    assert set(verdicts(store)) == {"Role 2", "Role 1"}

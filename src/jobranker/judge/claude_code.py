@@ -1,6 +1,7 @@
 """The judge that asks Claude through Claude Code's non-interactive mode on a plan login."""
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -37,8 +38,14 @@ BILLED_VARIABLES = (
     "CLAUDE_CODE_USE_FOUNDRY",
 )
 
-_LIMIT_START = "You've hit your"
-# These limits exist only when the account pays for use beyond the plan.
+# How Claude Code starts the message of a reached limit. The second group is used only when
+# the account pays for use beyond the plan, and so are the words below inside the first.
+_PLAN_LIMIT_STARTS = ("You've hit your", "Usage limit reached")
+_SPEND_LIMIT_STARTS = (
+    "You're out of usage credits",
+    "You're out of extra usage",
+    "Credit balance is too low",
+)
 _SPEND_WORDS = ("spend limit", "budget")
 _NO_LOGIN = (
     "Claude Code is not signed in with a Claude plan. Run `claude auth login`,"
@@ -62,7 +69,7 @@ def check_ready(program: str = "claude", environ: Mapping[str, str] = os.environ
         done = subprocess.run(
             [program, "auth", "status"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=STATUS_TIMEOUT_SECONDS,
             check=False,
         )
@@ -80,8 +87,11 @@ def check_ready(program: str = "claude", environ: Mapping[str, str] = os.environ
 
 
 def _number(value: object) -> float:
-    # A bool is an int in Python and is no count.
-    return value if isinstance(value, int | float) and not isinstance(value, bool) else 0
+    # A bool is an int in Python and is no count, and JSON as Python reads it can hold
+    # NaN and Infinity.
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return 0
+    return value
 
 
 class ClaudeCodeJudge:
@@ -110,9 +120,13 @@ class ClaudeCodeJudge:
             "--tools",
             "",
             "--no-session-persistence",
-            # No user or project settings, so no hook and no server is loaded.
+            # No user or project settings, so no hook is loaded.
             "--setting-sources",
             "",
+            # No server of the machine or the account, so no tool comes in that way either.
+            "--strict-mcp-config",
+            # No skill and no command.
+            "--disable-slash-commands",
             "--system-prompt",
             prompt.SYSTEM,
             "--model",
@@ -130,14 +144,16 @@ class ClaudeCodeJudge:
                     self._command(),
                     input=text,
                     capture_output=True,
-                    text=True,
+                    # Fixed, so the text does not depend on the language settings of the terminal.
+                    encoding="utf-8",
                     cwd=folder,
                     timeout=self._timeout,
                     check=False,
                 )
         except subprocess.TimeoutExpired:
             raise JudgeFailure("timeout") from None
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, ValueError):
+            # A ValueError is text that cannot be encoded or decoded.
             raise JudgeFailure("error") from None
         return self._read(done.stdout, cut)
 
@@ -152,8 +168,11 @@ class ClaudeCodeJudge:
             raise JudgeFailure("not JSON")
         if result.get("is_error"):
             message = result.get("result")
-            if isinstance(message, str) and message.startswith(_LIMIT_START):
-                raise LimitReached(spend=any(word in message for word in _SPEND_WORDS))
+            if isinstance(message, str):
+                if message.startswith(_SPEND_LIMIT_STARTS):
+                    raise LimitReached(spend=True)
+                if message.startswith(_PLAN_LIMIT_STARTS):
+                    raise LimitReached(spend=any(word in message for word in _SPEND_WORDS))
             raise JudgeFailure("error")
         if result.get("structured_output") is None:
             raise JudgeFailure("no answer")

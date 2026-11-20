@@ -1,5 +1,6 @@
 """SQLite storage for postings, versions, rule results, decisions, verdicts and the run log."""
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterable, Sequence
@@ -76,7 +77,7 @@ CREATE TABLE decisions (
 _SCHEMA_V4 = """
 CREATE TABLE verdicts (
   posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
-  content_hash TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
   profile_hash TEXT NOT NULL,
   prompt_version INTEGER NOT NULL,
   model TEXT NOT NULL,
@@ -90,6 +91,11 @@ CREATE TABLE verdicts (
   duration_ms INTEGER NOT NULL,
   cost_usd REAL NOT NULL,
   judged_at TEXT NOT NULL
+);
+CREATE TABLE judge_failures (
+  posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
+  failures INTEGER NOT NULL,
+  last_failed TEXT NOT NULL
 );
 """
 
@@ -154,6 +160,15 @@ class StoredPosting:
     duplicate_of: int | None
     first_seen: datetime
     last_seen: datetime
+
+
+def _judge_input(content_hash: str, company: str) -> str:
+    """A hash of what the judge reads of a posting.
+
+    The judge is told the company, which is no part of the content hash, so a corrected
+    company name has to make a verdict stale as a changed text does.
+    """
+    return hashlib.sha256(f"{content_hash}\x1f{company}".encode()).hexdigest()
 
 
 def _to_text(moment: datetime) -> str:
@@ -530,13 +545,14 @@ class Store:
         prompt_version: int,
         now: datetime,
     ) -> None:
-        """Store the verdict on this posting, replacing an older one."""
+        """Store the verdict on this posting, replacing an older one, and forget its failures."""
         with self._db:
+            self._db.execute("DELETE FROM judge_failures WHERE posting_id = ?", (stored.id,))
             self._db.execute(
                 f"INSERT OR REPLACE INTO verdicts VALUES ({', '.join('?' * 15)})",
                 (
                     stored.id,
-                    stored.content_hash,
+                    _judge_input(stored.content_hash, stored.posting.company),
                     judge_hash,
                     prompt_version,
                     verdict.model,
@@ -553,40 +569,66 @@ class Store:
                 ),
             )
 
-    def _verdict_rows(
-        self, ids: Sequence[int], judge_hash: str, prompt_version: int
-    ) -> list[sqlite3.Row]:
-        # A verdict counts only for the posting text, the profile and the prompt it was made for.
+    def record_failure(self, stored: StoredPosting, now: datetime) -> None:
+        """Count one failed call for this posting, so that it waits behind the others."""
+        with self._db:
+            self._db.execute(
+                "INSERT INTO judge_failures VALUES (?, 1, ?) ON CONFLICT (posting_id)"
+                " DO UPDATE SET failures = failures + 1, last_failed = excluded.last_failed",
+                (stored.id, _to_text(now)),
+            )
+
+    def _verdict_rows(self, ids: Sequence[int]) -> list[sqlite3.Row]:
         # There is at most one verdict per group, so all of them are read and the wanted ones
         # are picked here. A list of ids of any length then needs no long statement.
         wanted = set(ids)
         rows = self._db.execute(
-            "SELECT v.* FROM verdicts v JOIN postings p ON p.id = v.posting_id"
-            " WHERE v.content_hash = p.content_hash AND v.profile_hash = ?"
-            " AND v.prompt_version = ?",
-            (judge_hash, prompt_version),
+            "SELECT v.*, p.content_hash, p.company FROM verdicts v"
+            " JOIN postings p ON p.id = v.posting_id"
         ).fetchall()
         return [row for row in rows if row["posting_id"] in wanted]
+
+    @staticmethod
+    def _counts(row: sqlite3.Row, judge_hash: str, prompt_version: int) -> bool:
+        # A verdict counts only for the posting, the profile and the prompt it was made for.
+        return bool(
+            row["input_hash"] == _judge_input(row["content_hash"], row["company"])
+            and row["profile_hash"] == judge_hash
+            and row["prompt_version"] == prompt_version
+        )
+
+    @staticmethod
+    def _verdict(row: sqlite3.Row) -> Verdict:
+        return Verdict(
+            decision=row["decision"],
+            reasons=tuple(json.loads(row["reasons"])),
+            matched=tuple(json.loads(row["matched"])),
+            missing=tuple(json.loads(row["missing"])),
+            cut=bool(row["cut"]),
+            model=row["model"],
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+            duration_ms=row["duration_ms"],
+            cost_usd=row["cost_usd"],
+        )
 
     def current_verdicts(
         self, ids: Sequence[int], judge_hash: str, prompt_version: int
     ) -> dict[int, Verdict]:
         """The verdicts of these postings that still count, whichever model gave them."""
         return {
-            row["posting_id"]: Verdict(
-                decision=row["decision"],
-                reasons=tuple(json.loads(row["reasons"])),
-                matched=tuple(json.loads(row["matched"])),
-                missing=tuple(json.loads(row["missing"])),
-                cut=bool(row["cut"]),
-                model=row["model"],
-                input_tokens=row["input_tokens"],
-                output_tokens=row["output_tokens"],
-                duration_ms=row["duration_ms"],
-                cost_usd=row["cost_usd"],
-            )
-            for row in self._verdict_rows(ids, judge_hash, prompt_version)
+            row["posting_id"]: self._verdict(row)
+            for row in self._verdict_rows(ids)
+            if self._counts(row, judge_hash, prompt_version)
         }
+
+    def stored_verdicts(self, ids: Sequence[int]) -> dict[int, Verdict]:
+        """The last verdict of each of these postings, whether it still counts or not.
+
+        For a decided posting, which is never judged again: what the judge said when the
+        decision was made stays the best there is.
+        """
+        return {row["posting_id"]: self._verdict(row) for row in self._verdict_rows(ids)}
 
     def pending_judgement(
         self,
@@ -596,11 +638,21 @@ class Store:
         prompt_version: int,
         model: str,
     ) -> list[StoredPosting]:
-        """The groups to review whose posting has no verdict of this model that still counts."""
+        """The groups to review whose posting has no verdict of this model that still counts.
+
+        Newest first, and behind them the postings whose calls failed before, fewest failures
+        first. A posting that fails every time then never holds up the others.
+        """
         groups = self.review_groups(rule_hash, rules_version)
-        rows = self._verdict_rows([stored.id for stored in groups], judge_hash, prompt_version)
-        judged = {row["posting_id"] for row in rows if row["model"] == model}
-        return [stored for stored in groups if stored.id not in judged]
+        judged = {
+            row["posting_id"]
+            for row in self._verdict_rows([stored.id for stored in groups])
+            if row["model"] == model and self._counts(row, judge_hash, prompt_version)
+        }
+        failures = dict(self._db.execute("SELECT posting_id, failures FROM judge_failures"))
+        waiting = [stored for stored in groups if stored.id not in judged]
+        # The sort keeps the order of postings with the same number of failures.
+        return sorted(waiting, key=lambda stored: failures.get(stored.id, 0))
 
     def run_summaries(self, limit: int) -> list[RunSummary]:
         """The last runs, newest first."""

@@ -36,6 +36,7 @@
   {% if card.fresh %}<span class="eyes" aria-hidden="true"><span class="eye"><i></i></span><span class="eye"><i></i></span></span>{% endif %}
   <h2 class="card-title">{{ card.title }}</h2>
   <p class="meta"><span>{{ card.company }}</span>{% if card.location %}<span>{{ card.location }}</span>{% endif %}<span>{{ card.found }}</span></p>
+  {% if card.verdict or tab == "review" %}
   <div class="judged">
     {% if card.verdict == "yes" %}
     <p class="verdict yes">Fits</p>
@@ -51,6 +52,7 @@
     </ul>
     {% endif %}
   </div>
+  {% endif %}
   {% if card.excerpt %}
   <p class="excerpt">{{ card.excerpt }}{% if card.cut %} …{% endif %}</p>
   {% endif %}

@@ -970,7 +970,7 @@ def test_decided_tabs_show_the_verdict_too(db: Path, path: str) -> None:
     decide(db, unjudged, decision)
     html = page(db, path, profile=JUDGING)
     assert '<p class="verdict yes">Fits</p>' in card_of(html, "Role 1")
-    assert "Not judged yet" in card_of(html, "Role 3")
+    assert "Not judged" not in card_of(html, "Role 3")
 
 
 def test_markup_in_a_reason_is_shown_as_text(db: Path) -> None:
@@ -1004,3 +1004,23 @@ def test_verdict_marks_use_tested_colours_and_never_the_accent(db: Path) -> None
     assert "background: var(--base)" in found[".verdict.no"]
     assert "var(--accent)" not in found[".verdict.yes"] + found[".verdict.no"] + found[".verdict"]
     assert "overflow-wrap: anywhere" in found[".reasons"]
+
+
+def test_decided_card_keeps_its_verdict_after_a_profile_change(db: Path) -> None:
+    fits, _, unjudged = verdict_postings(db)
+    decide(db, fits, Decision.APPLIED)
+    decide(db, unjudged, Decision.APPLIED)
+    other = JUDGING.model_copy(update={"skills": ["Python", "SQL"]})
+    html = page(db, "/applied", profile=other)
+    # A decided posting is never judged again, so what was said at the time stays.
+    assert '<p class="verdict yes">Fits</p>' in card_of(html, "Role 1")
+    assert "Asks for Python." in card_of(html, "Role 1")
+    # A decided card that was never judged says nothing, since no run will judge it.
+    assert "Not judged" not in card_of(html, "Role 3")
+    assert "verdict" not in card_of(html, "Role 3")
+
+
+def test_only_yes_without_a_yes_reminds_of_a_changed_profile(db: Path) -> None:
+    add(db, posting(1))
+    html = page(db, "/?yes=1", profile=JUDGING)
+    assert "If profile.yaml changed since the dashboard started, start it again." in html

@@ -899,3 +899,41 @@ def test_current_verdicts_take_any_model_and_hide_a_stale_one(store: Store) -> N
     assert set(store.current_verdicts(ids, "judge-a", 1)) == {id_of(store, old)}
     assert store.current_verdicts(ids, "judge-a", 2) == {}
     assert store.current_verdicts([], "judge-a", 1) == {}
+
+
+def test_failed_postings_wait_behind_the_others_fewest_failures_first(store: Store) -> None:
+    postings = [make_posting(posting_id=str(n), title=f"Role {n}") for n in range(1, 5)]
+    for number, posting in enumerate(postings):
+        store.save(posting, T1.replace(minute=number))
+        checked(store, posting, [])
+    one, two, three, four = postings
+    assert waiting(store) == [four, three, two, one]
+    for failed in (four, four, three):
+        stored = store.get(failed.source, failed.board, failed.posting_id)
+        assert stored is not None
+        store.record_failure(stored, T3)
+    assert waiting(store) == [two, one, three, four]
+    # A verdict clears the failures of its posting.
+    judged(store, four)
+    assert waiting(store) == [two, one, three]
+    assert store.dump().count('INSERT INTO "judge_failures"') == 1
+
+
+def test_verdict_goes_stale_when_the_company_name_is_corrected(store: Store) -> None:
+    old, _ = two_passing(store)
+    judged(store, old)
+    renamed = old.model_copy(update={"company": "Northwind Robotics Lda"})
+    assert renamed.content_hash == old.content_hash
+    store.save(renamed, T3)
+    checked(store, renamed, [])
+    assert renamed in waiting(store)
+    assert store.current_verdicts([id_of(store, renamed)], "judge-a", 1) == {}
+
+
+def test_stored_verdicts_are_given_even_when_they_no_longer_count(store: Store) -> None:
+    old, new = two_passing(store)
+    judged(store, old, judge="judge-old")
+    ids = [id_of(store, old), id_of(store, new)]
+    assert store.current_verdicts(ids, "judge-a", 1) == {}
+    assert store.stored_verdicts(ids) == {id_of(store, old): make_verdict()}
+    assert store.stored_verdicts([]) == {}

@@ -23,7 +23,7 @@ from jobranker.display import RunDisplay, summary
 from jobranker.judge.base import Judge, JudgeFailure, JudgeUnavailable
 from jobranker.judge.claude_code import DEFAULT_MODEL, ClaudeCodeJudge, check_ready
 from jobranker.models import Verdict
-from jobranker.profile import Profile, ProfileError, load_profile
+from jobranker.profile import EXAMPLE, Profile, ProfileError, load_profile
 from jobranker.rules import RULES_VERSION, Reason
 from jobranker.screening import apply_rules
 from jobranker.sources import linkedin
@@ -260,6 +260,14 @@ def judge_command(
             noun = "posting waits" if count == 1 else "postings wait"
             typer.echo(f"{count} {noun} to be judged")
             return
+        if not loaded.roles and not loaded.skills:
+            # Without them every answer would be a guess, paid for from the plan limit.
+            typer.echo(
+                f"{profile} has no `roles` and no `skills`, so the judge has nothing to compare"
+                f" a posting with. Add them as in {EXAMPLE}.",
+                err=True,
+            )
+            raise typer.Exit(1)
         try:
             judge = make_judge(model)
         except JudgeUnavailable as error:

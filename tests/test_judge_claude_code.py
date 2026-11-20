@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -56,15 +57,17 @@ GOOD_LOGIN = {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "first
 # test prepared, so no test starts the real program or needs a login.
 STAND_IN = """#!{python}
 import json, os, sys, time
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
 here = os.path.dirname(os.path.abspath(__file__))
 if sys.argv[1:3] == ["auth", "status"]:
     sys.stdout.write(open(os.path.join(here, "auth.txt")).read())
     sys.exit(0)
-with open(os.path.join(here, "call.json"), "w") as record:
+with open(os.path.join(here, "call.json"), "w", encoding="utf-8") as record:
     json.dump({{"args": sys.argv[1:], "cwd": os.getcwd(), "files": os.listdir("."),
                "stdin": sys.stdin.read()}}, record)
 time.sleep(float(open(os.path.join(here, "sleep.txt")).read()))
-sys.stdout.write(open(os.path.join(here, "output.txt")).read())
+sys.stdout.write(open(os.path.join(here, "output.txt"), encoding="utf-8").read())
 sys.exit(int(open(os.path.join(here, "exit.txt")).read()))
 """
 
@@ -80,7 +83,7 @@ class StandIn:
 
     def answers(self, output: object, *, exit_code: int = 0, sleep: float = 0) -> None:
         text = output if isinstance(output, str) else json.dumps(output)
-        (self.folder / "output.txt").write_text(text)
+        (self.folder / "output.txt").write_text(text, encoding="utf-8")
         (self.folder / "exit.txt").write_text(str(exit_code))
         (self.folder / "sleep.txt").write_text(str(sleep))
 
@@ -90,7 +93,7 @@ class StandIn:
 
     @property
     def call(self) -> dict[str, Any]:
-        loaded: dict[str, Any] = json.loads((self.folder / "call.json").read_text())
+        loaded: dict[str, Any] = json.loads((self.folder / "call.json").read_text(encoding="utf-8"))
         return loaded
 
     def judge(self, **options: Any) -> ClaudeCodeJudge:
@@ -115,6 +118,8 @@ def test_command_line_holds_every_flag_and_no_posting_text(stand_in: StandIn) ->
         "--no-session-persistence",
         "--setting-sources",
         "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
         "--system-prompt",
         prompt.SYSTEM,
         "--model",
@@ -183,6 +188,10 @@ def test_missing_usage_figures_count_as_zero(stand_in: StandIn) -> None:
         (json.dumps(RESULT | {"structured_output": "yes"}), "bad answer"),
         (json.dumps(RESULT | {"is_error": True, "result": "API Error: overloaded"}), "error"),
         (json.dumps({"is_error": True}), "error"),
+        (
+            json.dumps(RESULT | {"is_error": True, "result": "Not a limit: You've hit your"}),
+            "error",
+        ),
     ],
 )
 def test_broken_output_is_a_failure_with_a_fixed_word(
@@ -215,6 +224,10 @@ def test_output_is_read_even_when_the_program_exits_with_an_error(stand_in: Stan
         ("You've hit your weekly limit · resets Mon 12:00am", False),
         ("You've hit your monthly spend limit · raise it at https://example.test", True),
         ("You've hit your team's shared budget · ask your admin", True),
+        ("You're out of usage credits · add more at https://example.test", True),
+        ("You're out of extra usage · resets 3:45pm", True),
+        ("Credit balance is too low", True),
+        ("Usage limit reached · resets 3:45pm", False),
     ],
 )
 def test_limit_message_stops_as_a_reached_limit(
@@ -287,3 +300,47 @@ def test_login_that_is_not_a_plan_login_is_refused(stand_in: StandIn, status: ob
     stand_in.login(status)
     with pytest.raises(JudgeUnavailable, match="claude auth login"):
         check_ready(str(stand_in.program), {})
+
+
+@pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN", "true", '"12"', "null"])
+def test_figure_that_is_no_finite_number_counts_as_zero(stand_in: StandIn, value: str) -> None:
+    output = json.dumps(RESULT | {"duration_ms": "X", "total_cost_usd": "X"}).replace('"X"', value)
+    usage = json.dumps(RESULT["usage"])
+    stand_in.answers(output.replace(usage, usage.replace("320", value)))
+    verdict = stand_in.judge().judge(POSTING, PROFILE)
+    assert verdict.decision == "yes"
+    assert (verdict.output_tokens, verdict.duration_ms, verdict.cost_usd) == (0, 0, 0.0)
+    assert verdict.input_tokens == 1232
+
+
+def test_text_goes_to_and_from_the_program_as_utf8_whatever_the_locale(
+    stand_in: StandIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = subprocess.run
+    encodings: list[object] = []
+
+    def recording(*args: Any, **options: Any) -> Any:
+        encodings.append(options.get("encoding"))
+        return real(*args, **options)
+
+    monkeypatch.setattr(subprocess, "run", recording)
+    unusual = POSTING.model_copy(update={"description": "Curaçao office – robots 🤖 と AI"})
+    stand_in.answers(RESULT | {"structured_output": ANSWER | {"reasons": ["Fits – naïve 🤖."]}})
+    check_ready(str(stand_in.program), {})
+    verdict = stand_in.judge().judge(unusual, PROFILE)
+    assert encodings == ["utf-8", "utf-8"]
+    assert "Curaçao office – robots 🤖 と AI" in stand_in.call["stdin"]
+    assert verdict.reasons == ("Fits – naïve 🤖.",)
+
+
+def test_text_that_cannot_be_encoded_is_one_failed_call(
+    stand_in: StandIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(*args: Any, **options: Any) -> Any:
+        raise UnicodeEncodeError("ascii", "–", 0, 1, "ordinal not in range")
+
+    monkeypatch.setattr(subprocess, "run", failing)
+    with pytest.raises(JudgeFailure) as failure:
+        stand_in.judge().judge(POSTING, PROFILE)
+    assert failure.value.reason == "error"
+    assert failure.value.__cause__ is None

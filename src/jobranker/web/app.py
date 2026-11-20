@@ -296,6 +296,7 @@ def create_app(
             elif groups and only_yes and not only_entry and not query:
                 empty = (
                     "No job has a yes. Run `jobrank judge` in the terminal, or turn the switch off."
+                    " If profile.yaml changed since the dashboard started, start it again."
                 )
             elif groups:
                 empty = "No job matches. Clear the search or turn the switch off."
@@ -347,7 +348,9 @@ def create_app(
         stamped = path == APPLIED
         with opened() as store:
             groups = store.decided_groups(_DECISION_OF[path])
-            judged = verdicts(store, [stored for stored, _ in groups])
+            # A decided posting is never judged again, so its last verdict is shown even when
+            # the profile or the prompt changed since.
+            judged = store.stored_verdicts([stored.id for stored, _ in groups])
             cards = [
                 _card(stored, moment, at if stamped else None, judged.get(stored.id))
                 for stored, at in groups

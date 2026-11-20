@@ -911,3 +911,18 @@ def test_real_judge_is_checked_before_it_is_made(monkeypatch: pytest.MonkeyPatch
     assert checks == ["checked"]
     assert isinstance(judge, ClaudeCodeJudge)
     assert judge.model == "model-b"
+
+
+def test_judge_refuses_a_profile_without_roles_and_skills_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile, asked = judge_setup(tmp_path, monkeypatch)
+    profile.write_text(PROFILE_TEXT)
+    code, lines = judge_command(database, profile)
+    assert code == 1
+    assert "roles" in lines[0] and "skills" in lines[0]
+    assert "config/profile.example.yaml" in lines[0]
+    assert asked == []
+    assert verdict_rows(database) == 0
+    profile.write_text(PROFILE_TEXT + "roles: [data engineer]\n")
+    assert judge_command(database, profile)[0] == 0

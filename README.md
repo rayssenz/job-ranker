@@ -62,7 +62,8 @@ The command has Claude read each posting that passed the rules and answer yes or
 - One run judges at most 40 postings, newest first (`--limit`). A larger backlog takes several runs.
 - A posting is judged once, and again only when its text, the judge's part of the profile, the prompt or the model changes.
 - `--model` picks another model than the small default.
-- A failed call stores nothing and the posting is judged on the next run. Three failed calls in a row stop the run.
+- A failed call stores no verdict. The posting is tried again on a later run, behind the postings that have not failed. Three failed calls in a row stop the run.
+- The profile needs `roles` or `skills`. Without both the command refuses to start.
 
 The command sends each posting and the roles, skills, notes, languages and level words of the profile to the model provider through Claude Code. It sends nothing else. The verdicts stay in `data/ranker.db`.
 
@@ -84,7 +85,7 @@ uv run jobrank dashboard
 The command applies the rules, starts a small web application on `http://127.0.0.1:8765` and opens it in the browser. Ctrl+C stops it. Postings collected while it runs show up after a reload.
 
 - **To review** shows the postings that passed the rules as cards, newest first. "Applied" and "Not for me" move a posting to its own tab, so the list gets shorter. A switch keeps student and junior titles only, and a search field looks in title, company and place.
-- A card that was judged shows "Fits" or "Does not fit" with the reasons. The switch "Only yes" keeps the yes cards, with the fewest missing requirements first. It is off at the start, so a posting with a no is still shown.
+- A card that was judged shows "Fits" or "Does not fit" with the reasons. The switch "Only yes" keeps the yes cards, with the fewest missing requirements first. It is off at the start, so a posting with a no is still shown. The dashboard reads `profile.yaml` once, at its start. After a change of the profile, start it again, or the cards say "Not judged yet".
 - **Applied** and **Not for me** show what was decided, each with "Undo".
 - **Runs** shows the last ten collection runs and the sources that the latest one did not collect.
 

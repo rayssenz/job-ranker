@@ -159,3 +159,19 @@ def test_wire_schema_states_the_limits_of_the_answer() -> None:
             "maxItems": 30,
             "items": {"type": "string", "maxLength": 100},
         }
+
+
+def test_empty_profile_list_is_named_as_not_stated_and_not_as_nothing() -> None:
+    bare = Profile(places=["Lisbon"], skills=["Python"])
+    text, _ = prompt.build(make_posting(), bare)
+    for line in (
+        "Wanted roles: not stated",
+        "Skills: Python",
+        "Languages: not stated",
+        "Accepted levels: not stated",
+        "Rejected levels: not stated",
+        "Notes: none",
+    ):
+        assert line in text.splitlines()
+    assert "not stated" in prompt.SYSTEM
+    assert "do not judge on" in prompt.SYSTEM
