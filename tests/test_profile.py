@@ -89,3 +89,24 @@ def test_impossible_date_in_the_profile_is_rejected_without_its_digits(tmp_path:
         load_profile(path)
     assert "profile.yaml" in str(error.value)
     assert "2026" not in str(error.value)
+
+
+def test_judge_digest_follows_the_fields_the_judge_reads() -> None:
+    base = Profile(places=["Lisbon"], skills=["Python"], languages=["English"])
+    assert base.model_copy(update={"places": ["Porto"]}).judge_digest == base.judge_digest
+    assert base.model_copy(update={"avoid": ["gambling"]}).judge_digest == base.judge_digest
+    assert base.model_copy(update={"title_words": ["data"]}).judge_digest == base.judge_digest
+    for field, value in (
+        ("roles", ["data engineer"]),
+        ("skills", ["Python", "SQL"]),
+        ("notes", "No travel."),
+        ("languages", ["English", "Portuguese"]),
+    ):
+        assert base.model_copy(update={field: value}).judge_digest != base.judge_digest
+    levels = Profile.model_validate(
+        base.model_dump() | {"levels": {"accept": [], "reject": ["senior"]}}
+    )
+    assert levels.judge_digest != base.judge_digest
+    assert base.model_copy(update={"skills": ["SQL"]}).digest == base.digest
+    assert len(base.judge_digest) == 64
+    assert base.judge_digest != base.digest

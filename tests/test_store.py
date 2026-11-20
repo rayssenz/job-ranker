@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jobranker.models import Posting
+from jobranker.models import Posting, Verdict
 from jobranker.store import Decision, Outcome, RunSummary, Store, StoreError
 
 T1 = datetime(2026, 11, 19, 8, 0, tzinfo=UTC)
@@ -37,7 +37,7 @@ def test_creates_missing_folder_and_schema_version(tmp_path: Path) -> None:
     path = tmp_path / "data" / "ranker.db"
     Store(path).close()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     connection.close()
 
 
@@ -249,7 +249,7 @@ def assert_refused(path: Path) -> None:
     assert error.value.__cause__ is None
 
 
-@pytest.mark.parametrize("version", [-1, 4, 99])
+@pytest.mark.parametrize("version", [-1, 5, 99])
 def test_version_without_an_upgrade_step_is_refused(tmp_path: Path, version: int) -> None:
     path = tmp_path / "ranker.db"
     connection = sqlite3.connect(path)
@@ -372,7 +372,7 @@ def test_version_1_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> No
         assert store.pending_rules("profile-a", 1) == [stored]
         assert store.decide(stored.id, Decision.APPLIED, T2)
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     connection.close()
 
 
@@ -525,7 +525,7 @@ def test_version_2_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> No
         assert store.decide(stored.id, Decision.DISMISSED, T3)
         assert store.decided_groups(Decision.DISMISSED) == [(stored, T3)]
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     connection.close()
 
 
@@ -737,3 +737,165 @@ def test_version_mark_moves_with_new_and_changed_postings_only(store: Store) -> 
     assert changed != first
     store.save(make_posting(posting_id="1002", title="Data Engineer"), T2)
     assert store.version_mark() != changed
+
+
+# The table milestone 3 added, kept here for the same reason as the schemas above.
+SCHEMA_V3 = """
+CREATE TABLE decisions (
+  posting_id INTEGER PRIMARY KEY REFERENCES postings(id),
+  decision TEXT NOT NULL CHECK (decision IN ('applied','dismissed')),
+  decided_at TEXT NOT NULL
+);
+"""
+
+
+def version_3_database(path: Path) -> None:
+    version_2_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA_V3)
+    connection.execute("INSERT INTO decisions VALUES (1, 'applied', ?)", (T3.isoformat(),))
+    connection.execute("PRAGMA user_version = 3")
+    connection.commit()
+    connection.close()
+
+
+def test_version_3_database_is_upgraded_and_keeps_its_rows(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    version_3_database(path)
+    with Store(path) as store:
+        assert store.count() == 1
+        stored = store.get("greenhouse", "northwindrobotics", "1001")
+        assert stored is not None
+        assert (stored.posting.title, stored.first_seen) == ("ML Engineer", T1)
+        assert store.versions(stored.id) == [("hash-1", T1)]
+        assert [row["run_id"] for row in store.runs()] == ["run1"]
+        assert store.rule_counts("profile-a", 1) == {"checked": 1, "passed": 1, "groups": 1}
+        assert store.decided_groups(Decision.APPLIED) == [(stored, T3)]
+        store.save_verdict(stored, make_verdict(), "judge-a", 1, T4)
+        assert store.current_verdicts([stored.id], "judge-a", 1) == {stored.id: make_verdict()}
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    connection.close()
+
+
+def test_version_1_database_is_upgraded_to_the_newest_version(tmp_path: Path) -> None:
+    path = tmp_path / "ranker.db"
+    version_1_database(path)
+    with Store(path) as store:
+        assert store.count() == 1
+        assert [row["run_id"] for row in store.runs()] == ["run1"]
+        assert store.current_verdicts([1], "judge-a", 1) == {}
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    connection.close()
+
+
+def make_verdict(**changes: object) -> Verdict:
+    fields: dict[str, object] = {
+        "decision": "yes",
+        "reasons": ("Asks for Python and SQL, both in the profile.",),
+        "matched": ("Python", "SQL"),
+        "missing": ("Airflow",),
+        "cut": False,
+        "model": "model-a",
+        "input_tokens": 1500,
+        "output_tokens": 120,
+        "duration_ms": 1900,
+        "cost_usd": 0.0004,
+    }
+    return Verdict.model_validate(fields | changes)
+
+
+def waiting(
+    store: Store, judge: str = "judge-a", prompt: int = 1, model: str = "model-a"
+) -> list[Posting]:
+    return [s.posting for s in store.pending_judgement("profile-a", 1, judge, prompt, model)]
+
+
+def judged(
+    store: Store, posting: Posting, verdict: Verdict | None = None, judge: str = "judge-a"
+) -> None:
+    stored = store.get(posting.source, posting.board, posting.posting_id)
+    assert stored is not None
+    store.save_verdict(stored, verdict or make_verdict(), judge, 1, T3)
+
+
+def test_verdict_round_trips_with_every_field(store: Store) -> None:
+    old, _ = two_passing(store)
+    verdict = make_verdict(decision="no", reasons=("Needs five years.", "Asks for Rust."), cut=True)
+    judged(store, old, verdict)
+    assert store.current_verdicts([id_of(store, old)], "judge-a", 1) == {id_of(store, old): verdict}
+
+
+def test_second_verdict_replaces_the_first(store: Store) -> None:
+    old, _ = two_passing(store)
+    judged(store, old)
+    judged(store, old, make_verdict(decision="no"))
+    found = store.current_verdicts([id_of(store, old)], "judge-a", 1)
+    assert found[id_of(store, old)].decision == "no"
+    assert store.dump().count('INSERT INTO "verdicts"') == 1
+
+
+def test_groups_wait_for_a_verdict_newest_first_until_they_are_judged(store: Store) -> None:
+    old, new = two_passing(store)
+    assert waiting(store) == [new, old]
+    judged(store, new)
+    assert waiting(store) == [old]
+    judged(store, old)
+    assert waiting(store) == []
+
+
+def test_decided_and_dropped_groups_do_not_wait(store: Store) -> None:
+    old, new = two_passing(store)
+    dropped = make_posting(posting_id="1003", title="Sales Lead")
+    store.save(dropped, T2)
+    checked(store, dropped, ["title"])
+    store.decide(id_of(store, new), Decision.DISMISSED, T3)
+    assert waiting(store) == [old]
+
+
+def test_verdict_goes_stale_with_the_text_the_judge_profile_the_prompt_and_the_model(
+    store: Store,
+) -> None:
+    old, new = two_passing(store)
+    judged(store, old)
+    judged(store, new)
+    assert waiting(store, judge="judge-b") == [new, old]
+    assert waiting(store, prompt=2) == [new, old]
+    assert waiting(store, model="model-b") == [new, old]
+    changed = old.model_copy(update={"description": "Build other models."})
+    store.save(changed, T3)
+    checked(store, changed, [])
+    assert waiting(store) == [changed]
+
+
+def test_a_change_of_the_rule_profile_alone_leaves_a_verdict_current(store: Store) -> None:
+    old, _ = two_passing(store)
+    judged(store, old)
+    checked(store, old, [], profile="profile-b")
+    pending = store.pending_judgement("profile-b", 1, "judge-a", 1, "model-a")
+    assert pending == []
+
+
+def test_group_is_judged_again_when_another_posting_comes_to_stand_for_it(store: Store) -> None:
+    feed, copy = make_posting(location="Madrid"), linkedin_posting("900")
+    store.save(feed, T1)
+    store.save(copy, T2)
+    checked(store, feed, ["place"])
+    checked(store, copy, [])
+    judged(store, copy)
+    assert waiting(store) == []
+    # The original now passes too and stands for the group.
+    checked(store, feed, [])
+    assert waiting(store) == [feed]
+    assert store.current_verdicts([id_of(store, feed)], "judge-a", 1) == {}
+
+
+def test_current_verdicts_take_any_model_and_hide_a_stale_one(store: Store) -> None:
+    old, new = two_passing(store)
+    judged(store, old, make_verdict(model="model-b"))
+    judged(store, new, judge="judge-old")
+    ids = [id_of(store, old), id_of(store, new)]
+    assert set(store.current_verdicts(ids, "judge-a", 1)) == {id_of(store, old)}
+    assert store.current_verdicts(ids, "judge-a", 2) == {}
+    assert store.current_verdicts([], "judge-a", 1) == {}
