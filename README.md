@@ -4,7 +4,7 @@ A command-line program that collects new job postings from public company job fe
 
 ## Status
 
-Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Milestone 3 is done: `jobrank dashboard` shows the postings that passed as cards in the browser, with a decision per posting. Nothing is ranked yet.
+Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Milestone 3 is done: `jobrank dashboard` shows the postings that passed as cards in the browser, with a decision per posting. Milestone 4 is done: `jobrank judge` has Claude say yes or no to each posting that passed, with reasons. How good the judge is has not been measured yet.
 
 ## Quick start
 
@@ -49,6 +49,32 @@ Edit `profile.yaml` first. It says which places, level words and languages fit, 
 
 Neither command sends a request.
 
+## Judge postings
+
+```bash
+uv run jobrank judge --dry-run
+uv run jobrank judge
+```
+
+The command has Claude read each posting that passed the rules and answer yes or no, with one to three short reasons and the requirements the profile covers and lacks. It needs [Claude Code](https://code.claude.com) installed and signed in with a Claude plan. Add `roles`, `skills` and `notes` to `profile.yaml` first, as in the example file.
+
+- `--dry-run` prints how many postings wait and judges nothing.
+- One run judges at most 40 postings, newest first (`--limit`). A larger backlog takes several runs.
+- A posting is judged once, and again only when its text, the judge's part of the profile, the prompt or the model changes.
+- `--model` picks another model than the small default.
+- A failed call stores nothing and the posting is judged on the next run. Three failed calls in a row stop the run.
+
+The command sends each posting and the roles, skills, notes, languages and level words of the profile to the model provider through Claude Code. It sends nothing else. The verdicts stay in `data/ranker.db`.
+
+### Cost
+
+The judge uses the plan login of Claude Code and no API key, so the calls draw from the usage limits of the plan. Two cases lead to a bill on top of the plan:
+
+- A model API key or token is set in the environment. The command refuses to start and names the variable.
+- The account has usage credits turned on. A call after a reached plan limit is then billed and does not fail. The program cannot see this setting, so turn usage credits off in the account settings.
+
+With usage credits off, a reached plan limit stops the run and the next run continues. Judging shares the limits with every other use of the same account. The cost figure stored with each verdict is computed from list prices and is not a charge.
+
 ## Review postings in the browser
 
 ```bash
@@ -58,6 +84,7 @@ uv run jobrank dashboard
 The command applies the rules, starts a small web application on `http://127.0.0.1:8765` and opens it in the browser. Ctrl+C stops it. Postings collected while it runs show up after a reload.
 
 - **To review** shows the postings that passed the rules as cards, newest first. "Applied" and "Not for me" move a posting to its own tab, so the list gets shorter. A switch keeps student and junior titles only, and a search field looks in title, company and place.
+- A card that was judged shows "Fits" or "Does not fit" with the reasons. The switch "Only yes" keeps the yes cards, with the fewest missing requirements first. It is off at the start, so a posting with a no is still shown.
 - **Applied** and **Not for me** show what was decided, each with "Undo".
 - **Runs** shows the last ten collection runs and the sources that the latest one did not collect.
 
@@ -74,6 +101,7 @@ The application answers on this machine only, sends no request, and loads no fil
 - [Milestone 2: rules](docs/specs/2026-11-19-m2-rules.md)
 - [Milestone 3: local dashboard](docs/specs/2026-11-19-m3-dashboard.md)
 - [Dashboard: the toy box look](docs/specs/2026-11-20-dashboard-toy-box-look.md)
+- [Milestone 4: judge](docs/specs/2026-11-20-m4-judge.md)
 - Decision records live in `docs/decisions/`.
 
 ## How this was built

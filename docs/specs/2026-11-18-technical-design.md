@@ -68,11 +68,11 @@ The same job can arrive from a company feed and from the search source. A new po
 
 ### Storage
 
-One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log. Milestone 2 adds the rule results. Milestone 3 adds the decisions. An older database is upgraded in place when it is opened.
+One SQLite file, `data/ranker.db`, holds postings, rule results, verdicts and run logs. It is not committed. Milestone 1 creates the tables for postings, posting versions and the run log. Milestone 2 adds the rule results. Milestone 3 adds the decisions. Milestone 4 adds the verdicts. An older database is upgraded in place when it is opened.
 
 ### Profile
 
-`profile.yaml` is not committed. `config/profile.example.yaml` is a fictional example. The rules read the accepted places, the remote preference, the accepted and rejected level words, the languages, the words to avoid and the words a title must hold. The judge reads the target roles, the skills and the free-text notes. Every word list is part of the profile, so the program holds no list that describes one person's search.
+`profile.yaml` is not committed. `config/profile.example.yaml` is a fictional example. The rules read the accepted places, the remote preference, the accepted and rejected level words, the languages, the words to avoid and the words a title must hold. The judge reads the target roles, the skills and the free-text notes, and also the languages and the level words, because a language or a level asked for only in the description is left to the judge. Every word list is part of the profile, so the program holds no list that describes one person's search.
 
 ### Rules
 
@@ -86,13 +86,17 @@ Four tabs, the first three with their count. "To review" shows the groups of lin
 
 A card has two decisions, "Applied" and "Not for me", and the decided tabs have "Undo". A decision is stored with the posting that was shown and counts for its whole group. A decided group stays in its tab when it no longer passes the rules, so a change of the profile removes no application from the list.
 
+A card with a verdict shows "Fits" or "Does not fit" and the reasons, and a card without one says "Not judged yet". A switch "Only yes" keeps the yes cards and orders them by fewest missing requirements. It is off when the dashboard opens, so a no hides nothing. The dashboard only reads verdicts and never starts a judging run.
+
 The application shows text from third parties and changes stored data. Every text is escaped when the page is built. A posting link is shown only when it is a plain `http` or `https` address. A request is served only when its `Host` names this machine and the port of this start. A request that changes data needs a `POST`, a token that is new at each start, and no foreign `Origin`. Every answer carries a content security policy and the headers that forbid framing and type guessing. The framework's automatic API pages are off.
 
 ### Judge
 
-One interface with three implementations.
+One interface with three implementations. `ClaudeCodeJudge` and `FakeJudge` come in milestone 4, `ReplayJudge` with the evaluation in milestone 6.
 
 `ClaudeCodeJudge` runs `claude -p` as a subprocess with JSON output, a JSON schema for the answer, no tools, no saved session, no user settings loaded, a fixed system prompt and a pinned model. A call with this flag set was tested on 2026-11-18 on a subscription login with no API key set. It returned the structured answer, token counts, duration and a notional cost in about 1.8 seconds. A tiny prompt used about 1,200 input tokens, so each call carries a fixed overhead. `--bare` cannot be used because it requires an API key.
+
+Before the first call the command checks that no variable is set that would lead to a billed call and that Claude Code reports a plan login. A reached plan limit stops the run at once. The milestone 4 spec and decision record 0010 have the details.
 
 `ReplayJudge` returns recorded answers, keyed by prompt version and posting hash.
 
@@ -114,7 +118,7 @@ A `cases add` command shows a stored posting, takes a yes or no and the slice ta
 
 ### Limits
 
-A run judges at most 40 postings by default. A judge failure is logged and the posting is retried on the next run.
+A run judges at most 40 postings by default. A judge failure stores nothing, so the posting is judged again on the next run. Three failures in a row stop the run.
 
 ## 6. Evaluation
 
@@ -174,7 +178,7 @@ Two things are left for later: marking by Telegram reply, and growing the set to
 
 ## 11. Risks
 
-- Non-interactive use of a subscription may change in limits or terms. The judge sits behind an interface, so another backend can be added.
+- Non-interactive use of a subscription may change in limits or terms. The judge sits behind an interface, so another backend can be added. A call is billed on top of the plan when a model API key is set in the environment, which the program refuses, or when the account has usage credits turned on and a plan limit is reached, which the program cannot see.
 - A small evaluation set gives a noisy number. The held-out split and the stated sample sizes limit over-claiming.
 - Feed formats change. The adapters are small and tested against saved samples.
 - The search source depends on an actor published by a third party. It can change its output, change its price or disappear. The actor name is a setting and its output is mapped in one function.
