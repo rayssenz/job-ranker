@@ -16,6 +16,10 @@
     <input type="checkbox" name="entry" value="1"{% if entry %} checked{% endif %}>
     <span>Student and junior only</span>
   </label>
+  <label class="switch">
+    <input type="checkbox" name="yes" value="1"{% if yes %} checked{% endif %}>
+    <span>Only yes</span>
+  </label>
   <label class="search">
     <span class="hidden">Search title, company or place</span>
     <input type="search" name="q" value="{{ query }}" maxlength="100" placeholder="Search title, company or place">
@@ -32,6 +36,23 @@
   {% if card.fresh %}<span class="eyes" aria-hidden="true"><span class="eye"><i></i></span><span class="eye"><i></i></span></span>{% endif %}
   <h2 class="card-title">{{ card.title }}</h2>
   <p class="meta"><span>{{ card.company }}</span>{% if card.location %}<span>{{ card.location }}</span>{% endif %}<span>{{ card.found }}</span></p>
+  {% if card.verdict or tab == "review" %}
+  <div class="judged">
+    {% if card.verdict == "yes" %}
+    <p class="verdict yes">Fits</p>
+    {% elif card.verdict == "no" %}
+    <p class="verdict no">Does not fit</p>
+    {% else %}
+    <p class="unjudged">Not judged yet</p>
+    {% endif %}
+    {% if card.reasons %}
+    <ul class="reasons">
+      {% for reason in card.reasons %}<li>{{ reason }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if card.excerpt %}
   <p class="excerpt">{{ card.excerpt }}{% if card.cut %} …{% endif %}</p>
   {% endif %}
@@ -51,6 +72,7 @@
       <input type="hidden" name="posting" value="{{ card.id }}">
       <input type="hidden" name="tab" value="review">
       {% if entry %}<input type="hidden" name="entry" value="1">{% endif %}
+      {% if yes %}<input type="hidden" name="yes" value="1">{% endif %}
       <input type="hidden" name="q" value="{{ query }}">
       <input type="hidden" name="page" value="{{ page }}">
       <button class="button go" type="submit" name="decision" value="applied">Applied</button>

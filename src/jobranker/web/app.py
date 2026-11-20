@@ -6,7 +6,7 @@ names this machine, and changes data only with the token of this start.
 """
 
 import secrets
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +21,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jobranker.collect import utc_now
+from jobranker.judge.prompt import PROMPT_VERSION
+from jobranker.models import Verdict
 from jobranker.profile import Profile
 from jobranker.rules import RULES_VERSION
 from jobranker.screening import apply_rules
@@ -73,6 +75,9 @@ class Card:
     description: str
     link: str | None
     stamp: str | None = None
+    # "yes", "no", or empty when the posting has no verdict that still counts.
+    verdict: str = ""
+    reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,7 +110,12 @@ def _minute(moment: datetime) -> str:
     return f"{moment.astimezone():%H:%M}"
 
 
-def _card(stored: StoredPosting, now: datetime, decided_at: datetime | None = None) -> Card:
+def _card(
+    stored: StoredPosting,
+    now: datetime,
+    decided_at: datetime | None = None,
+    verdict: Verdict | None = None,
+) -> Card:
     posting = stored.posting
     short, cut = view.excerpt(posting.description)
     source = view.SOURCE_NAMES.get(posting.source, posting.source)
@@ -121,6 +131,8 @@ def _card(stored: StoredPosting, now: datetime, decided_at: datetime | None = No
         description=posting.description,
         link=view.safe_link(posting.url),
         stamp=None if decided_at is None else f"Applied {_day(decided_at)}",
+        verdict="" if verdict is None else verdict.decision,
+        reasons=() if verdict is None else verdict.reasons,
     )
 
 
@@ -186,11 +198,13 @@ def _page_number(value: str) -> int:
         return 1
 
 
-def review_address(entry: bool, query: str, page: int) -> str:
+def review_address(entry: bool, query: str, page: int, yes: bool = False) -> str:
     """The address of a view of the review tab, built from checked values only."""
     values = {}
     if entry:
         values["entry"] = "1"
+    if yes:
+        values["yes"] = "1"
     if query:
         values["q"] = query
     if page > 1:
@@ -250,24 +264,40 @@ def create_app(
                 checked[:] = [mark]
             yield store
 
+    def verdicts(store: Store, groups: Sequence[StoredPosting]) -> dict[int, Verdict]:
+        """The verdicts that still count for these postings. The dashboard only reads them."""
+        ids = [stored.id for stored in groups]
+        return store.current_verdicts(ids, profile.judge_digest, PROMPT_VERSION)
+
     @app.get(REVIEW, response_class=HTMLResponse)
-    def review(entry: str = "", q: str = "", page: str = "1") -> HTMLResponse:
+    def review(entry: str = "", q: str = "", page: str = "1", yes: str = "") -> HTMLResponse:
         only_entry = entry == "1"
+        only_yes = yes == "1"
         query = _query(q)
         moment = now()
         with opened() as store:
             groups = store.review_groups(profile.digest, RULES_VERSION)
+            judged = verdicts(store, groups)
             kept = [
                 stored
                 for stored in groups
                 if (not only_entry or view.is_entry_level(stored.posting.title, profile))
                 and view.matches(stored.posting, query)
             ]
+            if only_yes:
+                kept = [s for s in kept if s.id in judged and judged[s.id].decision == "yes"]
+                # Fewest missing requirements first. The sort keeps newest first among equals.
+                kept.sort(key=lambda s: len(judged[s.id].missing))
             pages = max(1, -(-len(kept) // PAGE_SIZE))
             number = min(_page_number(page), pages)
             shown = kept[(number - 1) * PAGE_SIZE : number * PAGE_SIZE]
             if kept:
                 empty = ""
+            elif groups and only_yes and not only_entry and not query:
+                empty = (
+                    "No job has a yes. Run `jobrank judge` in the terminal, or turn the switch off."
+                    " If profile.yaml changed since the dashboard started, start it again."
+                )
             elif groups:
                 empty = "No job matches. Clear the search or turn the switch off."
             elif not store.count():
@@ -290,18 +320,25 @@ def create_app(
                 REVIEW,
                 count=len(groups),
                 words=f"{_noun(len(groups), 'job', 'jobs')} to review",
-                cards=[_card(stored, moment) for stored in shown],
+                cards=[_card(stored, moment, verdict=judged.get(stored.id)) for stored in shown],
                 empty=empty,
                 filters=True,
-                filtered=only_entry or bool(query),
+                filtered=only_entry or only_yes or bool(query),
                 entry=only_entry,
+                yes=only_yes,
                 query=query,
                 kept=len(kept),
                 total=len(groups),
                 page=number,
                 pages=pages,
-                previous=review_address(only_entry, query, number - 1) if number > 1 else None,
-                next=review_address(only_entry, query, number + 1) if number < pages else None,
+                previous=(
+                    review_address(only_entry, query, number - 1, only_yes) if number > 1 else None
+                ),
+                next=(
+                    review_address(only_entry, query, number + 1, only_yes)
+                    if number < pages
+                    else None
+                ),
                 run=_run_row(latest[0]) if latest else None,
                 tab="review",
             )
@@ -311,7 +348,13 @@ def create_app(
         stamped = path == APPLIED
         with opened() as store:
             groups = store.decided_groups(_DECISION_OF[path])
-            cards = [_card(stored, moment, at if stamped else None) for stored, at in groups]
+            # A decided posting is never judged again, so its last verdict is shown even when
+            # the profile or the prompt changed since.
+            judged = store.stored_verdicts([stored.id for stored, _ in groups])
+            cards = [
+                _card(stored, moment, at if stamped else None, judged.get(stored.id))
+                for stored, at in groups
+            ]
             return render(
                 "cards.html",
                 store,
@@ -359,9 +402,13 @@ def create_app(
     def unclear() -> PlainTextResponse:
         return PlainTextResponse("This request names no job and decision the dashboard knows.", 400)
 
-    def back(tab: str, entry: str = "", q: str = "", page: str = "1") -> RedirectResponse:
+    def back(
+        tab: str, entry: str = "", q: str = "", page: str = "1", yes: str = ""
+    ) -> RedirectResponse:
         """Send the browser to the tab it came from. No posted address is ever used."""
-        target = _TAB_PATHS.get(tab) or review_address(entry == "1", _query(q), _page_number(page))
+        target = _TAB_PATHS.get(tab) or review_address(
+            entry == "1", _query(q), _page_number(page), yes == "1"
+        )
         return RedirectResponse(target, status_code=303)
 
     @app.post("/decide")
@@ -373,6 +420,7 @@ def create_app(
         entry: str = Form(""),
         q: str = Form(""),
         page: str = Form("1"),
+        yes: str = Form(""),
     ) -> Response:
         if not allowed(token):
             return refused()
@@ -382,7 +430,7 @@ def create_app(
         with Store(db) as store:
             if not store.decide(row, Decision(decision), now()):
                 return PlainTextResponse("This job is not stored.", 404)
-        return back(tab, entry, q, page)
+        return back(tab, entry, q, page, yes)
 
     @app.post("/undo")
     def undo(posting: str = Form(""), token: str = Form(""), tab: str = Form("")) -> Response:

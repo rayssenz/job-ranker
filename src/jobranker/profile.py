@@ -12,6 +12,7 @@ from jobranker.config import Text
 EXAMPLE = "config/profile.example.yaml"
 # The fields the rules read. A change in any other field leaves the rule results valid.
 _RULE_FIELDS = frozenset({"places", "remote", "levels", "languages", "avoid", "title_words"})
+_JUDGE_FIELDS = frozenset({"roles", "skills", "notes", "languages", "levels"})
 
 
 class ProfileError(Exception):
@@ -49,7 +50,16 @@ class Profile(BaseModel):
     @property
     def digest(self) -> str:
         """A hash of the fields the rules read. Stored with each rule result."""
-        fields = self.model_dump(include=set(_RULE_FIELDS))
+        return self._hash(_RULE_FIELDS)
+
+    @property
+    def judge_digest(self) -> str:
+        """A hash of the fields the judge reads. Stored with each verdict."""
+        return self._hash(_JUDGE_FIELDS)
+
+    def _hash(self, names: frozenset[str]) -> str:
+        # The names are part of the hash, so the two digests of one profile always differ.
+        fields = self.model_dump(include=set(names))
         return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 

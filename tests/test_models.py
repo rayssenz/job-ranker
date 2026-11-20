@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from jobranker.models import Posting, Remote
+from jobranker.models import Posting, Remote, Verdict
 
 
 def make_posting(**changes: str) -> Posting:
@@ -73,3 +73,26 @@ def test_posting_is_frozen() -> None:
     posting = make_posting()
     with pytest.raises(ValidationError):
         posting.title = "Other"
+
+
+def test_verdict_takes_only_yes_or_no_and_no_unknown_field() -> None:
+    fields = {
+        "decision": "yes",
+        "reasons": ["Fits."],
+        "matched": [],
+        "missing": [],
+        "cut": False,
+        "model": "model-a",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "duration_ms": 1,
+        "cost_usd": 0.0,
+    }
+    verdict = Verdict.model_validate(fields)
+    assert verdict.reasons == ("Fits.",)
+    with pytest.raises(ValidationError):
+        Verdict.model_validate(fields | {"decision": "maybe"})
+    with pytest.raises(ValidationError):
+        Verdict.model_validate(fields | {"score": 4})
+    with pytest.raises(ValidationError):
+        verdict.decision = "no"

@@ -2,6 +2,7 @@
 
 import hashlib
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -43,3 +44,22 @@ class Posting(BaseModel):
         if not company or not title:
             return ""
         return f"{company}|{title}"
+
+
+class Verdict(BaseModel):
+    """What the judge said about one posting, and what the call used."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    decision: Literal["yes", "no"]
+    reasons: tuple[str, ...]
+    matched: tuple[str, ...]
+    missing: tuple[str, ...]
+    # The description was longer than the judge reads and was cut.
+    cut: bool
+    model: str
+    input_tokens: int
+    output_tokens: int
+    duration_ms: int
+    # A notional figure from list prices. On a plan login it is not a charge.
+    cost_usd: float

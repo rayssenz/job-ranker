@@ -16,14 +16,18 @@ import uvicorn
 from fastapi import FastAPI
 from rich.console import Console
 
+from jobranker import judging
 from jobranker.collect import DEFAULT_MAX_RESULTS, collect, utc_now
 from jobranker.config import ConfigError, load_companies, load_searches, read_token
 from jobranker.display import RunDisplay, summary
-from jobranker.profile import Profile, ProfileError, load_profile
+from jobranker.judge.base import Judge, JudgeFailure, JudgeUnavailable
+from jobranker.judge.claude_code import DEFAULT_MODEL, ClaudeCodeJudge, check_ready
+from jobranker.models import Verdict
+from jobranker.profile import EXAMPLE, Profile, ProfileError, load_profile
 from jobranker.rules import RULES_VERSION, Reason
 from jobranker.screening import apply_rules
 from jobranker.sources import linkedin
-from jobranker.store import Store, StoreError
+from jobranker.store import Store, StoredPosting, StoreError
 from jobranker.web.app import create_app
 
 FEED_TIMEOUT_SECONDS = 20.0
@@ -203,6 +207,77 @@ def list_command(
         posting = stored.posting
         typer.echo(f"{posting.company} | {posting.title} | {posting.location}")
         typer.echo(f"  {posting.url}")
+
+
+DEFAULT_JUDGE_LIMIT = 40
+STOP_MESSAGES = {
+    judging.PLAN_LIMIT: "Stopped: the plan limit is reached. Run again after it resets.",
+    judging.SPEND_LIMIT: (
+        "Stopped: a spend limit of usage credits is reached. Usage credits are on in the"
+        " account, so calls may have been billed. Turn them off in the account settings."
+    ),
+    judging.FAILURES: "Stopped: three calls failed in a row.",
+}
+
+
+def make_judge(model: str) -> Judge:
+    """The real judge, after the checks that it can run and is not billed. Tests replace this."""
+    check_ready()
+    return ClaudeCodeJudge(model)
+
+
+def _report(stored: StoredPosting, outcome: Verdict | JudgeFailure) -> None:
+    # Company and title only, as `list` prints them. The reasons stay in the database.
+    name = f"{stored.posting.company} | {stored.posting.title}"
+    if isinstance(outcome, Verdict):
+        typer.echo(f"{outcome.decision:<4} {name}")
+    else:
+        typer.echo(f"fail {name} ({outcome.reason})")
+
+
+@app.command("judge")
+def judge_command(
+    profile: ProfileOption = Path("profile.yaml"),
+    db: DatabaseOption = Path("data/ranker.db"),
+    limit: Annotated[
+        int, typer.Option(min=1, help="Most postings to judge in this run.")
+    ] = DEFAULT_JUDGE_LIMIT,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print how many postings wait, and judge nothing.")
+    ] = False,
+    model: Annotated[str, typer.Option(help="The model that judges.")] = DEFAULT_MODEL,
+) -> None:
+    """Have Claude say yes or no to the postings that passed the rules.
+
+    Sends each posting and the judge's part of the profile to the model provider through
+    Claude Code, on its plan login.
+    """
+    loaded, store = _open(profile, db)
+    with store:
+        apply_rules(store, loaded, utc_now())
+        if dry_run:
+            count = len(judging.waiting(store, loaded, model))
+            noun = "posting waits" if count == 1 else "postings wait"
+            typer.echo(f"{count} {noun} to be judged")
+            return
+        if not loaded.roles and not loaded.skills:
+            # Without them every answer would be a guess, paid for from the plan limit.
+            typer.echo(
+                f"{profile} has no `roles` and no `skills`, so the judge has nothing to compare"
+                f" a posting with. Add them as in {EXAMPLE}.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        try:
+            judge = make_judge(model)
+        except JudgeUnavailable as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(1) from None
+        tally = judging.run(store, loaded, judge, limit=limit, now=utc_now, report=_report)
+    typer.echo(f"yes {tally.yes}, no {tally.no}, failed {tally.failed}, waiting {tally.waiting}")
+    if tally.stopped is not None:
+        typer.echo(STOP_MESSAGES[tally.stopped], err=True)
+        raise typer.Exit(1)
 
 
 # The dashboard answers on this machine only. No other address is ever bound.
