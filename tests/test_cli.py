@@ -21,6 +21,9 @@ from typer.testing import CliRunner
 
 from jobranker import cli
 from jobranker.cli import app
+from jobranker.judge.base import Answer, JudgeFailure, JudgeUnavailable, LimitReached
+from jobranker.judge.claude_code import DEFAULT_MODEL, ClaudeCodeJudge
+from jobranker.judge.fake import FakeJudge
 from jobranker.models import Posting
 from jobranker.profile import load_profile
 from jobranker.rules import RULES_VERSION
@@ -688,3 +691,223 @@ def test_dashboard_stopped_with_ctrl_c_ends_without_an_error(
     lines = dashboard(database, profile, free_port(), "--no-open")
     assert lines[-1] == "Dashboard stopped."
     assert not any("Aborted" in line for line in lines)
+
+
+JUDGE_PROFILE = PROFILE_TEXT + "skills: [Python]\n"
+NO_ANSWER = Answer(
+    decision="no", reasons=["Needs five years of Rust."], matched=[], missing=["Rust"]
+)
+
+
+def judge_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge: FakeJudge | Exception | None = None
+) -> tuple[Path, Path, list[str]]:
+    """The store of `rules_setup`, and a fake judge in place of the real one.
+
+    The list holds the model of every judge the command asked for.
+    """
+    database, profile = rules_setup(tmp_path, monkeypatch)
+    profile.write_text(JUDGE_PROFILE)
+    asked: list[str] = []
+
+    def make_judge(model: str) -> FakeJudge:
+        asked.append(model)
+        if isinstance(judge, Exception):
+            raise judge
+        fake = judge or FakeJudge()
+        fake.model = model
+        return fake
+
+    monkeypatch.setattr(cli, "make_judge", make_judge)
+    return database, profile, asked
+
+
+def judge_command(database: Path, profile: Path, *extra: str) -> tuple[int, list[str]]:
+    result = runner.invoke(app, ["judge", "--db", str(database), "--profile", str(profile), *extra])
+    return result.exit_code, result.output.splitlines()
+
+
+def verdict_rows(database: Path) -> int:
+    with Store(database) as store:
+        return store.dump().count('INSERT INTO "verdicts"')
+
+
+def test_judge_gives_every_passing_group_one_verdict_and_prints_a_line_each(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeJudge({"Junior Data Engineer": NO_ANSWER})
+    database, profile, asked = judge_setup(tmp_path, monkeypatch, fake)
+    code, lines = judge_command(database, profile)
+    assert code == 0
+    assert lines == [
+        "yes  Northwind Robotics | Platform Engineer",
+        "no   Northwind Robotics | Junior Data Engineer",
+        "yes 1, no 1, failed 0, waiting 0",
+    ]
+    assert asked == [DEFAULT_MODEL]
+    # The rules ran first, the group of two linked postings was judged once.
+    assert [called.title for called in fake.calls] == ["Platform Engineer", "Junior Data Engineer"]
+    assert verdict_rows(database) == 2
+    assert not any("Rust" in line for line in lines)
+
+
+def test_second_judge_run_judges_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeJudge()
+    database, profile, _ = judge_setup(tmp_path, monkeypatch, fake)
+    judge_command(database, profile)
+    code, lines = judge_command(database, profile)
+    assert (code, lines) == (0, ["yes 0, no 0, failed 0, waiting 0"])
+    assert len(fake.calls) == 2
+
+
+def test_judge_runs_again_for_what_the_judge_reads_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeJudge()
+    database, profile, _ = judge_setup(tmp_path, monkeypatch, fake)
+    judge_command(database, profile)
+    profile.write_text(JUDGE_PROFILE + "avoid: [gambling]\n")
+    judge_command(database, profile)
+    assert len(fake.calls) == 2
+    profile.write_text(JUDGE_PROFILE.replace("[Python]", "[Python, SQL]"))
+    judge_command(database, profile)
+    assert len(fake.calls) == 4
+    judge_command(database, profile, "--model", "model-b")
+    assert len(fake.calls) == 6
+
+
+def test_judge_limit_and_the_next_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database, profile, _ = judge_setup(tmp_path, monkeypatch)
+    code, lines = judge_command(database, profile, "--limit", "1")
+    assert code == 0
+    assert lines == [
+        "yes  Northwind Robotics | Platform Engineer",
+        "yes 1, no 0, failed 0, waiting 1",
+    ]
+    _, lines = judge_command(database, profile, "--limit", "1")
+    assert lines[0] == "yes  Northwind Robotics | Junior Data Engineer"
+
+
+def test_judge_refuses_a_limit_below_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database, profile, asked = judge_setup(tmp_path, monkeypatch)
+    code, _ = judge_command(database, profile, "--limit", "0")
+    assert code == 2
+    assert asked == []
+
+
+def test_judge_dry_run_counts_and_asks_for_no_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile, asked = judge_setup(tmp_path, monkeypatch)
+    code, lines = judge_command(database, profile, "--dry-run")
+    assert (code, lines) == (0, ["2 postings wait to be judged"])
+    assert asked == []
+    assert verdict_rows(database) == 0
+    judge_command(database, profile, "--limit", "1")
+    assert judge_command(database, profile, "--dry-run")[1] == ["1 posting waits to be judged"]
+
+
+def test_judge_that_cannot_start_stops_before_any_posting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refusal = JudgeUnavailable("ANTHROPIC_API_KEY is set. Run `unset ANTHROPIC_API_KEY`.")
+    database, profile, asked = judge_setup(tmp_path, monkeypatch, refusal)
+    code, lines = judge_command(database, profile)
+    assert code == 1
+    assert lines == ["ANTHROPIC_API_KEY is set. Run `unset ANTHROPIC_API_KEY`."]
+    assert len(asked) == 1
+    assert verdict_rows(database) == 0
+
+
+def test_judge_prints_a_failed_call_with_its_fixed_word_and_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeJudge({"Platform Engineer": JudgeFailure("timeout")})
+    database, profile, _ = judge_setup(tmp_path, monkeypatch, fake)
+    code, lines = judge_command(database, profile)
+    assert code == 0
+    assert lines == [
+        "fail Northwind Robotics | Platform Engineer (timeout)",
+        "yes  Northwind Robotics | Junior Data Engineer",
+        "yes 1, no 0, failed 1, waiting 1",
+    ]
+
+
+def more_passing_postings(database: Path) -> None:
+    with Store(database) as store:
+        for number in (11, 12):
+            posting = Posting(
+                source="greenhouse",
+                board="northwindrobotics",
+                posting_id=str(number),
+                company="Northwind Robotics",
+                title=f"Engineer {number}",
+                location="Lisbon",
+            )
+            store.save(posting, datetime(2026, 11, number, 12, tzinfo=UTC))
+
+
+def test_judge_stops_after_three_failures_in_a_row_with_exit_code_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failure = JudgeFailure("bad answer")
+    fake = FakeJudge({"Platform Engineer": failure, "Engineer 12": failure, "Engineer 11": failure})
+    database, profile, _ = judge_setup(tmp_path, monkeypatch, fake)
+    more_passing_postings(database)
+    code, lines = judge_command(database, profile)
+    assert code == 1
+    assert lines[-2:] == [
+        "yes 0, no 0, failed 3, waiting 4",
+        "Stopped: three calls failed in a row.",
+    ]
+    assert len(fake.calls) == 3
+
+
+@pytest.mark.parametrize(
+    ("limit", "message"),
+    [
+        (LimitReached(), "Stopped: the plan limit is reached. Run again after it resets."),
+        (
+            LimitReached(spend=True),
+            "Stopped: a spend limit of usage credits is reached. Usage credits are on in the"
+            " account, so calls may have been billed. Turn them off in the account settings.",
+        ),
+    ],
+)
+def test_judge_stops_at_once_at_a_reached_limit_with_exit_code_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: LimitReached, message: str
+) -> None:
+    fake = FakeJudge({"Junior Data Engineer": limit})
+    database, profile, _ = judge_setup(tmp_path, monkeypatch, fake)
+    code, lines = judge_command(database, profile)
+    assert code == 1
+    assert lines == [
+        "yes  Northwind Robotics | Platform Engineer",
+        "yes 1, no 0, failed 0, waiting 1",
+        message,
+    ]
+    assert verdict_rows(database) == 1
+
+
+def test_judge_needs_a_profile_and_an_existing_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, profile, asked = judge_setup(tmp_path, monkeypatch)
+    missing = tmp_path / "typo" / "ranker.db"
+    code, lines = judge_command(missing, profile)
+    assert code == 1
+    assert "not found" in " ".join(lines)
+    assert not missing.parent.exists()
+    code, lines = judge_command(database, tmp_path / "none.yaml")
+    assert code == 1
+    assert "profile.example.yaml" in " ".join(lines)
+    assert asked == []
+
+
+def test_real_judge_is_checked_before_it_is_made(monkeypatch: pytest.MonkeyPatch) -> None:
+    checks: list[str] = []
+    monkeypatch.setattr(cli, "check_ready", lambda: checks.append("checked"))
+    judge = cli.make_judge("model-b")
+    assert checks == ["checked"]
+    assert isinstance(judge, ClaudeCodeJudge)
+    assert judge.model == "model-b"
