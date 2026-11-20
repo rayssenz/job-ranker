@@ -95,4 +95,4 @@ def test_verdict_takes_only_yes_or_no_and_no_unknown_field() -> None:
     with pytest.raises(ValidationError):
         Verdict.model_validate(fields | {"score": 4})
     with pytest.raises(ValidationError):
-        verdict.decision = "no"  # type: ignore[misc]
+        verdict.decision = "no"
