@@ -91,8 +91,8 @@ class RunRow:
     new: int
 
 
-def _plural(number: int, one: str, many: str) -> str:
-    return f"{number} {one if number == 1 else many}"
+def _noun(number: int, one: str, many: str) -> str:
+    return one if number == 1 else many
 
 
 def _day(moment: datetime) -> str:
@@ -288,7 +288,8 @@ def create_app(
                 "cards.html",
                 store,
                 REVIEW,
-                heading=f"{_plural(len(groups), 'job', 'jobs')} to review",
+                count=len(groups),
+                words=f"{_noun(len(groups), 'job', 'jobs')} to review",
                 cards=[_card(stored, moment) for stored in shown],
                 empty=empty,
                 filters=True,
@@ -315,7 +316,8 @@ def create_app(
                 "cards.html",
                 store,
                 path,
-                heading=_plural(len(groups), one, many),
+                count=len(groups),
+                words=_noun(len(groups), one, many),
                 cards=cards,
                 empty="" if cards else _EMPTY[path],
                 filters=False,
@@ -339,7 +341,8 @@ def create_app(
                 "runs.html",
                 store,
                 RUNS,
-                heading="Runs",
+                count=None,
+                words="Runs",
                 runs=[_run_row(summary) for summary in summaries],
                 failures=[
                     (view.SOURCE_NAMES.get(source, source), target, error)

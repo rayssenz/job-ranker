@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="same-origin">
-<title>{{ heading }} | Job Ranker</title>
+<title>{% if count is not none %}{{ count }} {% endif %}{{ words }} | Job Ranker</title>
 <link rel="icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/dashboard.css">
 <script src="/static/dashboard.js" defer></script>
@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <div class="lead">
-    <h1>{{ heading }}</h1>
+    <h1>{% if count is not none %}<b class="badge">{{ count }}</b> {% endif %}{{ words }}</h1>
     {% block lead %}{% endblock %}
   </div>
   <nav class="tabs" aria-label="Lists">

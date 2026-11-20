@@ -520,3 +520,38 @@ def test_plain_form_send_names_its_own_page(db: Path) -> None:
     html = site(db).get("/").text
     assert '<meta name="referrer" content="same-origin">' in html
     assert "no-referrer" not in html
+
+
+def test_script_respects_a_request_for_less_motion_and_stays_plain(db: Path) -> None:
+    script = site(db).get("/static/dashboard.js").text
+    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script
+    # The classes and values the stylesheet waits for.
+    for name in (
+        "applied-now",
+        "leaving",
+        "bump",
+        "entering",
+        "--look-x",
+        "--look-y",
+        "--x",
+        "--y",
+    ):
+        assert f'"{name}"' in script, name
+    for forbidden in (
+        "http:",
+        "https:",
+        "eval(",
+        "innerHTML",
+        "document.write",
+        'setAttribute("style"',
+    ):
+        assert forbidden not in script
+
+
+def test_script_guards_against_overlapping_decisions(db: Path) -> None:
+    script = site(db).get("/static/dashboard.js").text
+    # Two decisions on their way at once: neither answer alone shows the final page.
+    assert "overlapped" in script and "window.location.href" in script
+    assert "isConnected" in script
+    # The request is built inside the guarded part, so a failure falls back to the plain form.
+    assert script.index("try {") < script.index("new FormData(form, button)")
