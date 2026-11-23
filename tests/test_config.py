@@ -119,6 +119,24 @@ def test_region_only_allowed_for_lever(tmp_path: Path) -> None:
         load_companies(path)
 
 
+def test_region_not_allowed_for_personio(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n  - name: Acme Test\n    feed: personio\n    token: acme\n    region: eu\n",
+    )
+    with pytest.raises(ConfigError):
+        load_companies(path)
+
+
+def test_personio_feed_is_accepted(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n  - name: Acme Test\n    feed: personio\n    token: acme\n",
+    )
+    (company,) = load_companies(path)
+    assert (company.feed, company.token) == ("personio", "acme")
+
+
 def test_duplicate_company_is_rejected(tmp_path: Path) -> None:
     entry = "  - name: Acme Test\n    feed: lever\n    token: acme\n"
     path = write(tmp_path / "c.yaml", "companies:\n" + entry + entry)

@@ -2,8 +2,9 @@
 # These companies are made up.
 #
 # name:   written as the company writes it. Duplicates are matched on it.
-# feed:   greenhouse, lever or ashby
+# feed:   greenhouse, lever, ashby or personio
 # token:  the board name in the company's job page address.
+#         For personio, the first part of {token}.jobs.personio.de.
 #         A token made only of digits must be quoted, for example "0123".
 # region: lever only, global (default) or eu
 companies:
