@@ -121,12 +121,20 @@ def test_both_languages_failing_raises_first_reason() -> None:
     assert error.value.reason == "HTTP 404"
 
 
-@pytest.mark.parametrize("declaration", ["<!DOCTYPE x>", '<!ENTITY y "z">', "<!doctype x>"])
-def test_doctype_or_entity_is_refused(declaration: str) -> None:
+@pytest.mark.parametrize(
+    ("declaration", "reason"),
+    [
+        ("<!DOCTYPE x>", "unexpected shape"),
+        ('<!DOCTYPE x [<!ENTITY y "z">]>', "unexpected shape"),
+        ('<!ENTITY y "z">', "not XML"),
+        ("<!doctype x>", "not XML"),
+    ],
+)
+def test_doctype_or_entity_is_refused(declaration: str, reason: str) -> None:
     body = sample_text("personio_de.xml").replace("<workzag-jobs>", declaration + "<workzag-jobs>")
     with pytest.raises(SourceError) as error:
         personio.fetch(feeds(de=xml(body), en=xml(body)).client, PERSONIO)
-    assert error.value.reason == "unexpected shape"
+    assert error.value.reason == reason
 
 
 def test_html_answer_is_not_xml() -> None:
@@ -146,3 +154,43 @@ def test_other_root_element_is_unexpected_shape() -> None:
 def test_empty_feed_gives_no_postings() -> None:
     result = personio.fetch(feeds(de=xml(EMPTY), en=xml(EMPTY)).client, PERSONIO)
     assert result == FetchResult([], 0)
+
+
+def test_doctype_inside_a_description_is_kept() -> None:
+    pasted = "<![CDATA[<!DOCTYPE html><html><body><p>Build pipelines.</p></body></html>]]>"
+    body = sample_text("personio_de.xml").replace(
+        "<![CDATA[<p>Datenpipelines bauen.</p>]]>", pasted
+    )
+    postings = by_id(personio.fetch(feeds(de=xml(body)).client, PERSONIO))
+    assert "Build pipelines." in postings["101"].description
+
+
+def test_doctype_after_a_comment_is_refused() -> None:
+    body = sample_text("personio_de.xml").replace(
+        "<workzag-jobs>", "<!-- <workzag-jobs> --><!DOCTYPE x><workzag-jobs>", 1
+    )
+    with pytest.raises(SourceError) as error:
+        personio.fetch(feeds(de=xml(body), en=xml(body)).client, PERSONIO)
+    assert error.value.reason == "unexpected shape"
+
+
+def test_real_text_beats_longer_empty_headings() -> None:
+    def role(sections: str) -> str:
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<workzag-jobs><position><id>201</id>'
+            f"<office>Porto</office><name>Data Engineer</name><jobDescriptions>{sections}"
+            "</jobDescriptions></position></workzag-jobs>"
+        )
+
+    empty = "".join(
+        f"<jobDescription><name>{h}</name><value><![CDATA[]]></value></jobDescription>"
+        for h in ["Ihre Aufgaben", "Ihr Profil", "Was wir bieten", "Über uns"]
+    )
+    short = (
+        "<jobDescription><name>Role</name>"
+        "<value><![CDATA[<p>Join us.</p>]]></value></jobDescription>"
+    )
+    (posting,) = personio.fetch(
+        feeds(de=xml(role(empty)), en=xml(role(short))).client, PERSONIO
+    ).postings
+    assert posting.description == "Role\nJoin us."

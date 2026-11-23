@@ -2,11 +2,12 @@
 
 Personio holds each role's description in the language the company wrote it in. Asked in
 the other language, the feed returns the same role with an almost empty description. The
-feed is therefore read in German and in English, and each role keeps the longer description.
+feed is therefore read in German and in English, and each role keeps the version with more
+description text, not counting the section headings.
 """
 
-import re
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 
 import httpx
 
@@ -21,13 +22,12 @@ JOB_URL = "https://{token}.jobs.personio.de/job/{id}"
 LANGUAGES = ("de", "en")
 ROOT = "workzag-jobs"
 NOT_FOUND = "HTTP 404"
-# A declared document type or entity could make the reader load outside files or expand
-# text without limit. Personio's feed has neither, so an answer with one is refused.
-_DECLARATION = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
+# A role with its description text length, or None for a role without a title.
+Role = tuple[Posting, int] | None
 
 
 def fetch(client: httpx.Client, company: Company) -> FetchResult:
-    answers: list[tuple[dict[str, Posting | None], int]] = []
+    answers: list[tuple[dict[str, Role], int]] = []
     errors: list[SourceError] = []
     for language in LANGUAGES:
         try:
@@ -45,28 +45,53 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
     return _merge(answers)
 
 
-def _read(body: str, company: Company) -> tuple[dict[str, Posting | None], int]:
-    """The roles of one answer by ID (None for a role without a title) and the roles without ID."""
-    if _DECLARATION.search(body):
-        raise SourceError("unexpected shape")
+class _Declaration(Exception):
+    pass
+
+
+def _refuse_declarations(body: str) -> None:
+    """Refuse a declared document type or entity.
+
+    Either could make the reader load outside files or expand text without limit. Personio's
+    feed has neither. The parser itself reports them, so text inside a description, such as a
+    pasted `<!DOCTYPE html>` in a CDATA block, is not mistaken for one.
+    """
+
+    def refuse(*_: object) -> None:
+        raise _Declaration
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = refuse
+    parser.EntityDeclHandler = refuse
+    try:
+        parser.Parse(body, True)
+    except _Declaration:
+        raise SourceError("unexpected shape") from None
+    except expat.ExpatError:
+        raise SourceError("not XML") from None
+
+
+def _read(body: str, company: Company) -> tuple[dict[str, Role], int]:
+    """The roles of one answer by ID and the number of roles without ID."""
+    _refuse_declarations(body)
     try:
         root = ET.fromstring(body)
     except ET.ParseError:
         raise SourceError("not XML") from None
     if root.tag != ROOT:
         raise SourceError("unexpected shape")
-    roles: dict[str, Posting | None] = {}
+    roles: dict[str, Role] = {}
     without_id = 0
     for position in root.iter("position"):
         posting_id = text(position.findtext("id"))
         if not posting_id:
             without_id += 1
             continue
-        roles[posting_id] = _posting(position, posting_id, company)
+        roles[posting_id] = _role(position, posting_id, company)
     return roles, without_id
 
 
-def _posting(position: ET.Element, posting_id: str, company: Company) -> Posting | None:
+def _role(position: ET.Element, posting_id: str, company: Company) -> Role:
     title = text(position.findtext("name"))
     if not title:
         return None
@@ -75,7 +100,12 @@ def _posting(position: ET.Element, posting_id: str, company: Company) -> Posting
         *(o.text for o in position.iterfind("additionalOffices/office")),
     ]
     location = places(offices)
-    return Posting(
+    sections = [
+        (text(entry.findtext("name")), html_to_text(entry.findtext("value") or ""))
+        for entry in position.iterfind("jobDescriptions/jobDescription")
+    ]
+    description = "\n".join(part for section in sections for part in section if part)
+    posting = Posting(
         source=SOURCE,
         board=company.token,
         posting_id=posting_id,
@@ -84,27 +114,23 @@ def _posting(position: ET.Element, posting_id: str, company: Company) -> Posting
         location=location,
         remote=Remote.YES if "remote" in location.lower() else Remote.UNKNOWN,
         url=JOB_URL.format(token=company.token, id=posting_id),
-        description=_description(position),
+        description=description,
     )
+    return posting, sum(len(value) for _, value in sections)
 
 
-def _description(position: ET.Element) -> str:
-    parts: list[str] = []
-    for entry in position.iterfind("jobDescriptions/jobDescription"):
-        parts.append(text(entry.findtext("name")))
-        parts.append(html_to_text(entry.findtext("value") or ""))
-    return "\n".join(part for part in parts if part)
+def _merge(answers: list[tuple[dict[str, Role], int]]) -> FetchResult:
+    """One posting per role ID, in order of first appearance, with more description text.
 
-
-def _merge(answers: list[tuple[dict[str, Posting | None], int]]) -> FetchResult:
-    """One posting per role ID, in order of first appearance, with the longer description."""
+    On a tie the first language (German) is kept, so the choice is the same every run.
+    """
     ids = list(dict.fromkeys(posting_id for roles, _ in answers for posting_id in roles))
     postings: list[Posting] = []
     skipped = max(without_id for _, without_id in answers)
     for posting_id in ids:
-        versions = [p for roles, _ in answers if (p := roles.get(posting_id)) is not None]
+        versions = [r for roles, _ in answers if (r := roles.get(posting_id)) is not None]
         if not versions:
             skipped += 1
             continue
-        postings.append(max(versions, key=lambda p: len(p.description)))
+        postings.append(max(versions, key=lambda version: version[1])[0])
     return FetchResult(postings, skipped)
