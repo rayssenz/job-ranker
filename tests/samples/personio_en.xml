@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workzag-jobs>
+<position>
+    <id>101</id>
+    <office>Lisbon</office>
+    <additionalOffices>
+        <office>Porto</office>
+        <office>Lisbon</office>
+    </additionalOffices>
+    <name>Backend Engineer</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Tasks</name>
+            <value><![CDATA[]]></value>
+        </jobDescription>
+        <jobDescription>
+            <name>About you</name>
+            <value><![CDATA[]]></value>
+        </jobDescription>
+    </jobDescriptions>
+</position>
+<position>
+    <id>102</id>
+    <office>Remote, Portugal</office>
+    <name>R&amp;D Engineer</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>About the role</name>
+            <value><![CDATA[<p>Build the forecasting service.</p><p>Work with the data team.</p>]]></value>
+        </jobDescription>
+    </jobDescriptions>
+</position>
+<position>
+    <id>103</id>
+    <office>Porto</office>
+    <jobDescriptions></jobDescriptions>
+</position>
+</workzag-jobs>

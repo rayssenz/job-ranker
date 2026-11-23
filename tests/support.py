@@ -17,12 +17,17 @@ Route = Handler
 GREENHOUSE = Company(name="Northwind Robotics", feed="greenhouse", token="northwindrobotics")
 LEVER = Company(name="Bluefjord Labs", feed="lever", token="bluefjord", region="eu")
 ASHBY = Company(name="Tessellate Systems", feed="ashby", token="tessellate")
+PERSONIO = Company(name="Larkspur Analytics", feed="personio", token="larkspur")
 SEARCH = Search(keywords="machine learning engineer", location="Lisbon")
 TOKEN = "test-token-123"
 
 
 def sample(name: str) -> Any:
     return json.loads((SAMPLES / f"{name}.json").read_text())
+
+
+def sample_text(name: str) -> str:
+    return (SAMPLES / name).read_text()
 
 
 class Recorder:
