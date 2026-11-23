@@ -92,7 +92,8 @@ def test_collect_prints_one_line_per_source_and_exits_zero(
         "greenhouse Northwind Robotics: fetched 3, new 3, changed 0, duplicate 0",
         "lever      Bluefjord Labs: fetched 3, new 3, changed 0, duplicate 0",
         "ashby      Tessellate Systems: fetched 3, new 3, changed 0, duplicate 0",
-        "Done in 0:00: 3 sources, 0 not collected, 9 new postings.",
+        "personio   Larkspur Analytics: fetched 2, new 2, changed 0, duplicate 0, skipped 1",
+        "Done in 0:00: 4 sources, 0 not collected, 11 new postings.",
     ]
     assert (tmp_path / "data" / "ranker.db").exists()
 
@@ -109,7 +110,7 @@ def test_collect_reads_searches_and_token_from_env_file(
     args[args.index("--env-file") + 1] = str(env_file)
     result = runner.invoke(app, args)
     assert result.exit_code == 0
-    assert len(result.output.splitlines()) == 6
+    assert len(result.output.splitlines()) == 7
     assert "duplicate 1" in result.output
     assert TOKEN not in result.output
     apify = [r for r in recorder.requests if r.url.host == "api.apify.com"]
@@ -154,7 +155,7 @@ def test_collect_exits_one_when_every_source_failed(
     use_routes(monkeypatch, down)
     result = runner.invoke(app, collect_args(tmp_path))
     assert result.exit_code == 1
-    assert result.output.count("HTTP 503") == 3
+    assert result.output.count("HTTP 503") == 4
 
 
 def test_collect_exits_one_with_only_searches_and_no_token(
@@ -272,7 +273,7 @@ def test_plain_output_has_no_animation_and_ends_with_the_summary(
     lines = result.output.splitlines()
     assert lines[1] == "lever      Bluefjord Labs: HTTP 404"
     assert re.fullmatch(
-        r"Done in \d+:\d\d: 5 sources, 1 not collected, \d+ new postings\.", lines[-1]
+        r"Done in \d+:\d\d: 6 sources, 1 not collected, \d+ new postings\.", lines[-1]
     )
     assert TOKEN not in result.output
 
@@ -286,10 +287,10 @@ def test_terminal_output_shows_the_bar_and_the_running_source(
     assert result.exit_code == 0
     shown = screen.getvalue()
     assert "Collecting" in shown
-    assert "0/5" in shown and "5/5" in shown
+    assert "0/6" in shown and "6/6" in shown
     assert "machine learning engineer / Lisbon" in shown
     assert "greenhouse Northwind Robotics: fetched 3, new 3, changed 0, duplicate 0" in shown
-    assert re.search(r"Done in \d+:\d\d: 5 sources, 0 not collected, \d+ new postings\.", shown)
+    assert re.search(r"Done in \d+:\d\d: 6 sources, 0 not collected, \d+ new postings\.", shown)
     assert TOKEN not in shown + result.output
 
 
@@ -303,7 +304,7 @@ def test_quiet_gives_plain_output_in_a_terminal(
     shown = screen.getvalue() + result.output
     assert "Collecting" not in shown
     assert not CONTROL_CHARACTER.search(shown)
-    assert len(shown.splitlines()) == 6
+    assert len(shown.splitlines()) == 7
 
 
 def test_each_line_is_written_before_the_next_source_starts(
@@ -315,10 +316,13 @@ def test_each_line_is_written_before_the_next_source_starts(
         seen_at_request.append(len(capsys.readouterr().out.splitlines()))
         return httpx.Response(404)
 
-    use_routes(monkeypatch, routes(greenhouse=counting, lever=counting, ashby=counting))
+    use_routes(
+        monkeypatch, routes(greenhouse=counting, lever=counting, ashby=counting, personio=counting)
+    )
     with pytest.raises(SystemExit):
         app(collect_args(tmp_path))
-    assert seen_at_request == [0, 1, 1]
+    # Personio is asked twice, in German and in English, before its line is written.
+    assert seen_at_request == [0, 1, 1, 1, 0]
 
 
 PROFILE_TEXT = """

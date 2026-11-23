@@ -14,7 +14,7 @@ def write(path: Path, text: str) -> Path:
 
 def test_loads_example_companies() -> None:
     companies = load_companies(ROOT / "config" / "companies.example.yaml")
-    assert sorted(c.feed for c in companies) == ["ashby", "greenhouse", "lever"]
+    assert sorted(c.feed for c in companies) == ["ashby", "greenhouse", "lever", "personio"]
     lever = next(c for c in companies if c.feed == "lever")
     assert lever.region == "eu"
     assert all(c.region == "global" for c in companies if c.feed != "lever")

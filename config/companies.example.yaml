@@ -18,3 +18,6 @@ companies:
   - name: Tessellate Systems
     feed: ashby
     token: tessellate
+  - name: Larkspur Analytics
+    feed: personio
+    token: larkspur

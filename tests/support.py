@@ -54,12 +54,18 @@ def routes(**overrides: Route) -> Recorder:
         "api.eu.lever.co": lambda r: httpx.Response(200, json=sample("lever")),
         "api.ashbyhq.com": lambda r: httpx.Response(200, json=sample("ashby")),
         "api.apify.com": lambda r: httpx.Response(201, json=sample("linkedin")),
+        "larkspur.jobs.personio.de": lambda r: httpx.Response(
+            200,
+            text=sample_text(f"personio_{r.url.params['language']}.xml"),
+            headers={"Content-Type": "text/xml"},
+        ),
     }
     names = {
         "greenhouse": "boards-api.greenhouse.io",
         "lever": "api.eu.lever.co",
         "ashby": "api.ashbyhq.com",
         "apify": "api.apify.com",
+        "personio": "larkspur.jobs.personio.de",
     }
     for name, route in overrides.items():
         table[names[name]] = route

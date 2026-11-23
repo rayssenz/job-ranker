@@ -4,7 +4,7 @@ A command-line program that collects new job postings from public company job fe
 
 ## Status
 
-Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Milestone 3 is done: `jobrank dashboard` shows the postings that passed as cards in the browser, with a decision per posting. Milestone 4 is done: `jobrank judge` has Claude say yes or no to each posting that passed, with reasons. How good the judge is has not been measured yet.
+Milestone 1 is done: `jobrank collect` fetches postings from Greenhouse, Lever and Ashby company feeds (Personio was added later) and from a LinkedIn search, and stores them in a local SQLite file. Milestone 2 is done: `jobrank rules` drops the postings that cannot fit a private profile, and `jobrank list` prints the rest. Milestone 3 is done: `jobrank dashboard` shows the postings that passed as cards in the browser, with a decision per posting. Milestone 4 is done: `jobrank judge` has Claude say yes or no to each posting that passed, with reasons. How good the judge is has not been measured yet.
 
 ## Quick start
 

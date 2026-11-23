@@ -4,7 +4,7 @@ Status: approved on 2026-11-23.
 
 ## Problem
 
-The company feeds read three hiring systems: Greenhouse, Lever and Ashby. Many small and mid-sized companies in Germany publish their open roles through Personio instead, so their postings never reach the tool. Personio publishes every company's open roles as a public feed, without a login or a key, in the same way as the three systems already supported.
+The company feeds read three hiring systems: Greenhouse, Lever and Ashby. Many small and mid-sized companies in Europe publish their open roles through Personio instead, so their postings never reach the tool. Personio publishes every company's open roles as a public feed, without a login or a key, in the same way as the three systems already supported.
 
 ## What is added
 

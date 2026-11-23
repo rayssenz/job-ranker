@@ -92,8 +92,8 @@ def test_wrong_shape_raises(body: object) -> None:
     assert error.value.reason == "unexpected shape"
 
 
-def test_feeds_table_lists_three_adapters() -> None:
-    assert sorted(FEEDS) == ["ashby", "greenhouse", "lever"]
+def test_feeds_table_lists_four_adapters() -> None:
+    assert sorted(FEEDS) == ["ashby", "greenhouse", "lever", "personio"]
 
 
 @pytest.mark.parametrize(

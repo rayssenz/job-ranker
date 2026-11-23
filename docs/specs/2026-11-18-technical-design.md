@@ -54,7 +54,7 @@ feeds -> normalise -> store -> rules -> judge -> shortlist -> Hermes -> Telegram
 
 Each source has its own adapter. There are two kinds.
 
-Company feeds return every open posting of one company. All three are public and need no login: Greenhouse (`GET boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever (`GET api.lever.co/v0/postings/{token}`) and Ashby (`GET api.ashbyhq.com/posting-api/job-board/{token}`). Companies are listed in `config/companies.yaml` with their feed type and token.
+Company feeds return every open posting of one company. All four are public and need no login: Greenhouse (`GET boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever (`GET api.lever.co/v0/postings/{token}`), Ashby (`GET api.ashbyhq.com/posting-api/job-board/{token}`) and Personio (`GET {token}.jobs.personio.de/xml`, read in German and in English, see `2026-11-23-personio-feed.md`). Companies are listed in `config/companies.yaml` with their feed type and token.
 
 The search source returns postings that match search words and a place. It is LinkedIn, read through an Apify actor that fetches the public job pages without a login. Searches are listed in `config/searches.yaml`. Each result is billed by Apify, so a run asks for a limited number of results and every request carries a cost cap.
 
