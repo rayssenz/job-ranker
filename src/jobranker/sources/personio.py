@@ -20,6 +20,7 @@ URL = "https://{token}.jobs.personio.de/xml"
 JOB_URL = "https://{token}.jobs.personio.de/job/{id}"
 LANGUAGES = ("de", "en")
 ROOT = "workzag-jobs"
+NOT_FOUND = "HTTP 404"
 # A declared document type or entity could make the reader load outside files or expand
 # text without limit. Personio's feed has neither, so an answer with one is refused.
 _DECLARATION = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
@@ -33,6 +34,11 @@ def fetch(client: httpx.Client, company: Company) -> FetchResult:
             body = get_text(client, URL.format(token=company.token), params={"language": language})
             answers.append(_read(body, company))
         except SourceError as error:
+            # Only a language the company does not publish (404) is left out. Any other
+            # failure fails the company for this run, so a passing outage cannot replace
+            # stored descriptions with the near-empty text of the other language.
+            if error.reason != NOT_FOUND:
+                raise
             errors.append(error)
     if not answers:
         raise errors[0]

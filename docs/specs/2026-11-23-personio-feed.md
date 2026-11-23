@@ -1,6 +1,6 @@
 # Personio feed
 
-Status: approved on 2026-11-23.
+Status: approved on 2026-11-23. Amended on 2026-11-23 after review: a request failure other than 404 fails the company.
 
 ## Problem
 
@@ -26,7 +26,7 @@ Checked with live requests on 2026-11-23.
 
 Notes:
 
-- **Language.** Personio holds each role's description in the language the company wrote it in. Asked for the other language, the feed returns the same roles with the description almost empty, while the title and the place stay the same. The adapter therefore makes two requests per company, one for `de` and one for `en`, and keeps for each role the longer description. If one of the two requests fails, the other is used alone. If both fail, the source fails as the other feeds do.
+- **Language.** Personio holds each role's description in the language the company wrote it in. Asked for the other language, the feed returns the same roles with the description almost empty, while the title and the place stay the same. The adapter therefore makes two requests per company, one for `de` and one for `en`, and keeps for each role the longer description. If one of the two requests answers 404 (the company does not publish that language), the other is used alone. Any other failure of either request (a timeout, a connection error, another status, an answer that cannot be read) fails the company for that run, so a passing outage cannot replace stored descriptions with the near-empty text of the other language. If both answer 404, the source fails with that reason.
 - **Job address.** The feed holds no address for a role. The address is built as `https://{token}.jobs.personio.de/job/{id}`. A live check on 2026-11-23 showed that this address opens the role's page.
 - **Remote.** The feed has no field for remote work. Some companies write it into the office name, for example `Remote` or `Remote, Portugal`. A role is marked remote when its office name contains the word "remote", and unknown otherwise.
 - **Safe reading.** The answer is read with Python's own XML reader. An answer that declares a document type or entities is refused as a failed source, so a feed cannot make the reader load outside files or expand text without limit. No new package is needed.
@@ -62,7 +62,7 @@ A role with no ID or no title is skipped and counted as skipped, as in the other
 
 1. A company list entry with `feed: personio` is accepted. `region` with a Personio entry is refused, as with Greenhouse and Ashby.
 2. With a saved sample feed of made-up roles, `jobrank collect` stores every role with the ID, title, places, remote mark, built address and joined description described above.
-3. When the German and the English answer differ, each role keeps the longer description. When one of the two requests fails, the roles still come from the other.
+3. When the German and the English answer differ, each role keeps the longer description. When one of the two requests answers 404, the roles still come from the other. When one of them fails in any other way, the company fails for that run and its stored postings stay unchanged.
 4. A Personio name that does not exist (404) is a failed source with that reason in the run log, and the other companies are still collected.
 5. An answer that declares a document type or entities is refused and stores nothing.
 6. A role without an ID or title is skipped and counted.

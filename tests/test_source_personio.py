@@ -81,10 +81,37 @@ def test_role_only_in_one_language_is_kept() -> None:
     assert list(postings) == ["101", "102", "104"]
 
 
-def test_one_language_failing_uses_the_other() -> None:
-    result = personio.fetch(feeds(en=xml("", status=500)).client, PERSONIO)
+def test_one_language_not_found_uses_the_other() -> None:
+    result = personio.fetch(feeds(en=xml("missing", status=404)).client, PERSONIO)
     assert [p.posting_id for p in result.postings] == ["101", "102"]
     assert by_id(result)["102"].description == "Über die Rolle"
+
+
+@pytest.mark.parametrize("status", [500, 503, 429])
+def test_one_language_passing_error_fails_the_company(status: int) -> None:
+    with pytest.raises(SourceError) as error:
+        personio.fetch(feeds(en=xml("busy", status=status)).client, PERSONIO)
+    assert error.value.reason == f"HTTP {status}"
+
+
+def test_one_language_timeout_fails_the_company() -> None:
+    answers = {"de": xml(sample_text("personio_de.xml"))}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["language"] == "en":
+            raise httpx.ReadTimeout("slow", request=request)
+        return answers["de"]
+
+    with pytest.raises(SourceError) as error:
+        personio.fetch(Recorder(handler).client, PERSONIO)
+    assert error.value.reason == "timeout"
+
+
+def test_one_language_broken_answer_fails_the_company() -> None:
+    body = sample_text("personio_en.xml").replace("<workzag-jobs>", "<!DOCTYPE x><workzag-jobs>")
+    with pytest.raises(SourceError) as error:
+        personio.fetch(feeds(en=xml(body)).client, PERSONIO)
+    assert error.value.reason == "unexpected shape"
 
 
 def test_both_languages_failing_raises_first_reason() -> None:

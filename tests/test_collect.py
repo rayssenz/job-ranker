@@ -17,6 +17,7 @@ from support import (
     Route,
     routes,
     sample,
+    sample_text,
 )
 
 import jobranker.sources
@@ -309,3 +310,17 @@ def test_unknown_personio_name_fails_alone(store: Store) -> None:
     reports = run(store, missing, companies=[PERSONIO, ASHBY], searches=[])
     assert [(r.source, r.error) for r in reports] == [("personio", "HTTP 404"), ("ashby", None)]
     assert reports[1].new == 3
+
+
+def test_personio_passing_error_keeps_stored_description(store: Store) -> None:
+    run(store, routes(), companies=[PERSONIO], searches=[])
+
+    def english_down(request: httpx.Request) -> httpx.Response:
+        if request.url.params["language"] == "en":
+            return httpx.Response(503)
+        return httpx.Response(200, text=sample_text("personio_de.xml"))
+
+    (report,) = run(store, routes(personio=english_down), companies=[PERSONIO], searches=[])
+    assert report.error == "HTTP 503"
+    stored = store.get("personio", "larkspur", "102")
+    assert stored and stored.posting.description.startswith("About the role")
