@@ -17,12 +17,17 @@ Route = Handler
 GREENHOUSE = Company(name="Northwind Robotics", feed="greenhouse", token="northwindrobotics")
 LEVER = Company(name="Bluefjord Labs", feed="lever", token="bluefjord", region="eu")
 ASHBY = Company(name="Tessellate Systems", feed="ashby", token="tessellate")
+PERSONIO = Company(name="Larkspur Analytics", feed="personio", token="larkspur")
 SEARCH = Search(keywords="machine learning engineer", location="Lisbon")
 TOKEN = "test-token-123"
 
 
 def sample(name: str) -> Any:
     return json.loads((SAMPLES / f"{name}.json").read_text())
+
+
+def sample_text(name: str) -> str:
+    return (SAMPLES / name).read_text()
 
 
 class Recorder:
@@ -49,12 +54,18 @@ def routes(**overrides: Route) -> Recorder:
         "api.eu.lever.co": lambda r: httpx.Response(200, json=sample("lever")),
         "api.ashbyhq.com": lambda r: httpx.Response(200, json=sample("ashby")),
         "api.apify.com": lambda r: httpx.Response(201, json=sample("linkedin")),
+        "larkspur.jobs.personio.de": lambda r: httpx.Response(
+            200,
+            text=sample_text(f"personio_{r.url.params['language']}.xml"),
+            headers={"Content-Type": "text/xml"},
+        ),
     }
     names = {
         "greenhouse": "boards-api.greenhouse.io",
         "lever": "api.eu.lever.co",
         "ashby": "api.ashbyhq.com",
         "apify": "api.apify.com",
+        "personio": "larkspur.jobs.personio.de",
     }
     for name, route in overrides.items():
         table[names[name]] = route

@@ -35,7 +35,7 @@ class Company(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: Text
-    feed: Literal["greenhouse", "lever", "ashby"]
+    feed: Literal["greenhouse", "lever", "ashby", "personio"]
     token: BoardToken
     region: Literal["global", "eu"] = "global"
 

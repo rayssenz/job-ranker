@@ -14,7 +14,7 @@ def write(path: Path, text: str) -> Path:
 
 def test_loads_example_companies() -> None:
     companies = load_companies(ROOT / "config" / "companies.example.yaml")
-    assert sorted(c.feed for c in companies) == ["ashby", "greenhouse", "lever"]
+    assert sorted(c.feed for c in companies) == ["ashby", "greenhouse", "lever", "personio"]
     lever = next(c for c in companies if c.feed == "lever")
     assert lever.region == "eu"
     assert all(c.region == "global" for c in companies if c.feed != "lever")
@@ -117,6 +117,24 @@ def test_region_only_allowed_for_lever(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError):
         load_companies(path)
+
+
+def test_region_not_allowed_for_personio(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n  - name: Acme Test\n    feed: personio\n    token: acme\n    region: eu\n",
+    )
+    with pytest.raises(ConfigError):
+        load_companies(path)
+
+
+def test_personio_feed_is_accepted(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "c.yaml",
+        "companies:\n  - name: Acme Test\n    feed: personio\n    token: acme\n",
+    )
+    (company,) = load_companies(path)
+    assert (company.feed, company.token) == ("personio", "acme")
 
 
 def test_duplicate_company_is_rejected(tmp_path: Path) -> None:

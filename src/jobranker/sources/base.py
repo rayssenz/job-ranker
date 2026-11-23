@@ -23,8 +23,8 @@ class FetchResult:
     skipped: int = 0
 
 
-def get_json(client: httpx.Client, method: str, url: str, **kwargs: Any) -> Any:
-    """Send one request and return the parsed JSON body.
+def _request(client: httpx.Client, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """Send one request and return the successful response.
 
     The reasons raised here never include the response body, the headers or the text of
     the underlying exception, because any of them can carry a token.
@@ -38,10 +38,21 @@ def get_json(client: httpx.Client, method: str, url: str, **kwargs: Any) -> Any:
     # Redirects are not followed, so a moved board is reported with its own status.
     if not response.is_success:
         raise SourceError(f"HTTP {response.status_code}")
+    return response
+
+
+def get_json(client: httpx.Client, method: str, url: str, **kwargs: Any) -> Any:
+    """Send one request and return the parsed JSON body."""
+    response = _request(client, method, url, **kwargs)
     try:
         return response.json()
     except ValueError:
         raise SourceError("not JSON") from None
+
+
+def get_text(client: httpx.Client, url: str, **kwargs: Any) -> str:
+    """Send one GET request and return the body as text."""
+    return _request(client, "GET", url, **kwargs).text
 
 
 def items(body: Any) -> list[dict[str, Any]]:

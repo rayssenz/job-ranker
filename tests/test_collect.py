@@ -6,7 +6,19 @@ from typing import Any
 
 import httpx
 import pytest
-from support import ASHBY, GREENHOUSE, LEVER, SEARCH, TOKEN, Recorder, Route, routes, sample
+from support import (
+    ASHBY,
+    GREENHOUSE,
+    LEVER,
+    PERSONIO,
+    SEARCH,
+    TOKEN,
+    Recorder,
+    Route,
+    routes,
+    sample,
+    sample_text,
+)
 
 import jobranker.sources
 from jobranker.collect import SourceReport, collect
@@ -283,3 +295,32 @@ def test_finish_callback_runs_after_the_log_row_is_written(store: Store) -> None
         on_finish=lambda report: rows_seen.append(len(store.runs())),
     )
     assert rows_seen == [1, 2]
+
+
+def test_collects_personio_company(store: Store) -> None:
+    (report,) = run(store, routes(), companies=[PERSONIO], searches=[])
+    assert (report.source, report.target, report.error) == ("personio", "Larkspur Analytics", None)
+    assert (report.fetched, report.new, report.skipped) == (2, 2, 1)
+    stored = store.get("personio", "larkspur", "102")
+    assert stored and stored.posting.remote == Remote.YES
+
+
+def test_unknown_personio_name_fails_alone(store: Store) -> None:
+    missing = routes(personio=lambda r: httpx.Response(404, text="not found"))
+    reports = run(store, missing, companies=[PERSONIO, ASHBY], searches=[])
+    assert [(r.source, r.error) for r in reports] == [("personio", "HTTP 404"), ("ashby", None)]
+    assert reports[1].new == 3
+
+
+def test_personio_passing_error_keeps_stored_description(store: Store) -> None:
+    run(store, routes(), companies=[PERSONIO], searches=[])
+
+    def english_down(request: httpx.Request) -> httpx.Response:
+        if request.url.params["language"] == "en":
+            return httpx.Response(503)
+        return httpx.Response(200, text=sample_text("personio_de.xml"))
+
+    (report,) = run(store, routes(personio=english_down), companies=[PERSONIO], searches=[])
+    assert report.error == "HTTP 503"
+    stored = store.get("personio", "larkspur", "102")
+    assert stored and stored.posting.description.startswith("About the role")
